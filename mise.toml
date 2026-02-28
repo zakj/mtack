@@ -1,0 +1,40 @@
+[tools]
+rust = "stable"
+
+[tasks.build]
+description = "Build the project"
+run = "cargo build"
+
+[tasks.dev]
+description = "Build and run in development"
+run = "cargo run"
+
+[tasks."build:release"]
+description = "Build optimized release binary"
+run = "cargo build --release"
+
+[tasks.release]
+description = "Bump version, commit, and tag (dry run by default; add --execute to apply)"
+tools = { "github:crate-ci/cargo-release" = "latest" }
+run = "cargo release"
+
+[tasks.test]
+description = "Run tests"
+run = "cargo nextest run"
+
+[tasks.test-snap]
+description = "Update snapshot tests"
+run = "cargo insta test"
+
+[tasks.lint]
+description = "Run clippy"
+run = "cargo clippy -- -D warnings"
+
+[tasks.check]
+description = "Type-check without building"
+run = "cargo check"
+
+[tasks.demo]
+description = "Record demo GIF with VHS"
+tools = { ffmpeg = "latest", vhs = "latest" }
+run = "vhs demo/demo.tape"

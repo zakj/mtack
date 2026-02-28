@@ -1,0 +1,14 @@
+proc "server" {
+    cmd "bash" "-c" "trap exit TERM; while true; do printf '\\033[36m%s\\033[0m %-6s \\033[32m200\\033[0m /api/%s\\n' \"$(date +%H:%M:%S)\" \"$(echo -e 'GET\\nGET\\nPOST\\nPUT\\nDELETE' | sed -n \"$((RANDOM % 5 + 1))p\")\" \"$(echo -e 'users\\norders\\nhealth\\nauth\\nitems' | sed -n \"$((RANDOM % 5 + 1))p\")\"; sleep 0.15; done"
+    autorestart #false
+}
+
+proc "build" {
+    cmd "bash" "-c" "trap exit TERM; printf '\\033[33m[build]\\033[0m Compiling dependencies...\\n'; sleep 0.4; for mod in core utils api router db; do printf '\\033[33m[build]\\033[0m Compiling \\033[1m%s\\033[0m\\n' $mod; sleep 0.3; done; printf '\\033[32m[build]\\033[0m Build complete in 1.8s\\n'; printf '\\033[32m[build]\\033[0m Watching for changes...\\n'; while true; do sleep 3600; done"
+    autorestart #false
+}
+
+proc "python" {
+    cmd "python3" "-i" "-q"
+    autorestart #false
+}
