@@ -5,6 +5,7 @@ use crate::event::Event;
 use crate::input::{self, Action, Mode, ScrollAmount};
 use crate::process::Process;
 use crate::process::State;
+use crate::terminal::MatchSpan;
 use crossterm::event::{Event as CtEvent, EventStream, MouseButton, MouseEventKind};
 use futures_util::StreamExt;
 use ratatui::DefaultTerminal;
@@ -28,7 +29,7 @@ pub struct App {
     dirty: bool,
     search_query: String,
     last_search_query: String,
-    search_matches: Vec<(usize, usize, usize)>,
+    search_matches: Vec<MatchSpan>,
     search_current: Option<usize>,
     search_no_matches: bool,
     focused: bool,
@@ -50,7 +51,7 @@ impl App {
                     24,
                     80,
                     proc_config.scrollback(config.scrollback),
-                    Duration::from_secs(config.shutdown_timeout),
+                    config.shutdown_timeout,
                     event_tx.clone(),
                 )
             })
@@ -100,14 +101,12 @@ impl App {
         loop {
             tokio::select! {
                 _ = render_interval.tick(), if self.dirty => {
-                    let visible_matches: Vec<(u16, u16, u16)> =
+                    let visible_matches =
                         if !self.search_query.is_empty() && self.mode != Mode::Search {
                             self.processes[self.selected]
                                 .terminal_mut()
                                 .find_visible_matches(&self.search_query)
-                                .iter()
-                                .map(|&(row, col, len)| (row, col as u16, len as u16))
-                                .collect()
+                                .to_vec()
                         } else {
                             Vec::new()
                         };
@@ -330,12 +329,12 @@ impl App {
                         let idx = self
                             .search_matches
                             .iter()
-                            .rposition(|&(row, _, _)| row <= visible_bottom)
+                            .rposition(|m| m.row <= visible_bottom)
                             .unwrap_or(self.search_matches.len() - 1);
                         self.search_current = Some(idx);
                         self.processes[self.selected]
                             .terminal_mut()
-                            .scroll_to_row(self.search_matches[idx].0);
+                            .scroll_to_row(self.search_matches[idx].row);
                     }
                 }
                 if !self.search_query.is_empty() {
@@ -441,17 +440,17 @@ impl App {
         let idx = if forward {
             self.search_matches
                 .iter()
-                .position(|&(row, _, _)| row > visible_center)
+                .position(|m| m.row > visible_center)
         } else {
             self.search_matches
                 .iter()
-                .rposition(|&(row, _, _)| row < visible_center)
+                .rposition(|m| m.row < visible_center)
         };
         let Some(idx) = idx else { return };
         self.search_current = Some(idx);
         self.processes[self.selected]
             .terminal_mut()
-            .scroll_to_row(self.search_matches[idx].0);
+            .scroll_to_row(self.search_matches[idx].row);
     }
 
     fn resize_processes(&mut self) {

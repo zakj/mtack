@@ -152,20 +152,18 @@ fn push_badge(spans: &mut Vec<Span<'static>>, label: &str, bg: Color) {
     ));
 }
 
-fn build_hint(has_prefix: bool, key: &str, desc: &str) -> (Vec<Span<'static>>, usize) {
+fn build_hint(has_prefix: bool, key: &str, desc: &str) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
     if has_prefix {
         spans.push(Span::raw("  "));
     }
     hints::styled_keys(key, &mut spans);
     spans.push(Span::raw(format!(" {desc}")));
-    let width = spans.iter().map(|s| s.width()).sum();
-    (spans, width)
+    spans
 }
 
 fn push_hint(spans: &mut Vec<Span<'static>>, key: &str, desc: &str) {
-    let (hint, _) = build_hint(!spans.is_empty(), key, desc);
-    spans.extend(hint);
+    spans.extend(build_hint(!spans.is_empty(), key, desc));
 }
 
 /// Push a hint only if it fits within `max_width`. Updates `width` and returns
@@ -177,12 +175,12 @@ fn try_push_hint(
     key: &str,
     desc: &str,
 ) -> bool {
-    let (hint, w) = build_hint(*width > 0, key, desc);
-    if *width + w <= max_width {
-        spans.extend(hint);
-        *width += w;
-        true
-    } else {
-        false
+    let prefix = if *width > 0 { 2 } else { 0 };
+    let w = prefix + key.len() + 1 + desc.len();
+    if *width + w > max_width {
+        return false;
     }
+    spans.extend(build_hint(*width > 0, key, desc));
+    *width += w;
+    true
 }

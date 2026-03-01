@@ -8,6 +8,7 @@ mod viewport;
 
 use crate::input::Mode;
 use crate::process::Process;
+use crate::terminal::VisibleMatchSpan;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout};
 use tabs::{Tab, TabBar};
@@ -25,7 +26,7 @@ pub struct RenderContext<'a> {
     pub search_current: Option<usize>,
     pub search_no_matches: bool,
     pub remaining_count: usize,
-    pub visible_matches: &'a [(u16, u16, u16)],
+    pub visible_matches: &'a [VisibleMatchSpan],
 }
 
 pub fn render(frame: &mut Frame, ctx: &RenderContext) {
