@@ -41,6 +41,17 @@ async fn main() -> miette::Result<()> {
     )
     .map_err(|e| miette::miette!("{e}"))?;
 
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = crossterm::execute!(
+            std::io::stdout(),
+            crossterm::event::DisableMouseCapture,
+            crossterm::event::DisableFocusChange,
+        );
+        ratatui::restore();
+        original_hook(info);
+    }));
+
     let mut app = app::App::new(&config);
     let result = app.run(&mut terminal).await;
 
