@@ -1,5 +1,6 @@
 // Process output viewport (renders vt100 screen).
 
+use crate::terminal::VisibleMatchSpan;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
@@ -9,11 +10,11 @@ use tui_term::widget::{Cursor, PseudoTerminal};
 pub struct Viewport<'a> {
     screen: &'a vt100::Screen,
     focused: bool,
-    matches: &'a [(u16, u16, u16)],
+    matches: &'a [VisibleMatchSpan],
 }
 
 impl<'a> Viewport<'a> {
-    pub fn new(screen: &'a vt100::Screen, focused: bool, matches: &'a [(u16, u16, u16)]) -> Self {
+    pub fn new(screen: &'a vt100::Screen, focused: bool, matches: &'a [VisibleMatchSpan]) -> Self {
         Self {
             screen,
             focused,
@@ -30,10 +31,10 @@ impl Widget for Viewport<'_> {
 
         let match_style = Style::default().fg(Color::Black).bg(Color::Yellow);
 
-        for &(row, col, len) in self.matches {
-            for c in col..col.saturating_add(len) {
+        for m in self.matches {
+            for c in m.col..m.col.saturating_add(m.len) {
                 let x = area.x + c;
-                let y = area.y + row;
+                let y = area.y + m.row;
                 if x < area.x + area.width && y < area.y + area.height {
                     buf[(x, y)].set_style(match_style);
                 }

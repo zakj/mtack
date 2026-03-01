@@ -1,15 +1,29 @@
 // vt100 wrapper, scrollback management per process.
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MatchSpan {
+    pub row: usize,
+    pub col: usize,
+    pub len: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VisibleMatchSpan {
+    pub row: u16,
+    pub col: u16,
+    pub len: u16,
+}
+
 pub struct Terminal {
     parser: vt100::Parser,
     scrollback_len: usize,
     search_dirty: bool,
     cached_all_query: String,
-    cached_all_matches: Vec<(usize, usize, usize)>,
+    cached_all_matches: Vec<MatchSpan>,
     cached_all_total_rows: usize,
     cached_visible_query: String,
     cached_visible_scrollback: usize,
-    cached_visible_matches: Vec<(u16, usize, usize)>,
+    cached_visible_matches: Vec<VisibleMatchSpan>,
 }
 
 impl Terminal {
@@ -32,10 +46,7 @@ impl Terminal {
         // buffer so the viewport stays pinned to the same content.
         let sb = self.parser.screen().scrollback();
         let max_before = if sb > 0 {
-            self.parser.screen_mut().set_scrollback(self.scrollback_len);
-            let max = self.parser.screen().scrollback();
-            self.parser.screen_mut().set_scrollback(sb);
-            Some(max)
+            Some(self.max_scrollback())
         } else {
             None
         };
@@ -44,8 +55,7 @@ impl Terminal {
         self.search_dirty = true;
 
         if let Some(max_before) = max_before {
-            self.parser.screen_mut().set_scrollback(self.scrollback_len);
-            let max_after = self.parser.screen().scrollback();
+            let max_after = self.max_scrollback();
             self.parser
                 .screen_mut()
                 .set_scrollback(sb + max_after.saturating_sub(max_before));
@@ -110,10 +120,7 @@ impl Terminal {
 
     /// Total row count (scrollback + visible) without scanning content.
     pub fn total_rows(&mut self) -> usize {
-        let saved = self.parser.screen().scrollback();
-        self.parser.screen_mut().set_scrollback(self.scrollback_len);
-        let max_sb = self.parser.screen().scrollback();
-        self.parser.screen_mut().set_scrollback(saved);
+        let max_sb = self.max_scrollback();
         let (rows, _) = self.parser.screen().size();
         max_sb + rows as usize
     }
@@ -135,9 +142,7 @@ impl Terminal {
         (text, char_to_col)
     }
 
-    /// Find case-insensitive matches of `query` on currently visible screen rows.
-    /// Returns (screen_row, col, len) tuples.
-    pub fn find_visible_matches(&mut self, query: &str) -> &[(u16, usize, usize)] {
+    pub fn find_visible_matches(&mut self, query: &str) -> &[VisibleMatchSpan] {
         if query.is_empty() {
             return &[];
         }
@@ -158,18 +163,21 @@ impl Terminal {
             for (byte_start, _) in text_lower.match_indices(&query_lower) {
                 let (start_col, len) =
                     match_display_span(&text_lower, byte_start, query_chars, &char_to_col, cols);
-                matches.push((row, start_col, len));
+                matches.push(VisibleMatchSpan {
+                    row,
+                    col: start_col as u16,
+                    len: len as u16,
+                });
             }
         }
         self.cached_visible_query = query.to_string();
         self.cached_visible_scrollback = scrollback;
         self.cached_visible_matches = matches;
+        self.search_dirty = false;
         &self.cached_visible_matches
     }
 
-    /// Find all case-insensitive matches of `query` across all scrollback + visible rows.
-    /// Returns (matches, total_rows) where matches are (absolute_row, col, len) tuples.
-    pub fn find_all_matches(&mut self, query: &str) -> (&[(usize, usize, usize)], usize) {
+    pub fn find_all_matches(&mut self, query: &str) -> (&[MatchSpan], usize) {
         if query.is_empty() {
             return (&[], 0);
         }
@@ -191,9 +199,6 @@ impl Terminal {
         let mut matches = Vec::new();
 
         for abs_row in 0..total_rows {
-            // We need to set scrollback so that `abs_row` is visible on screen.
-            // When scrollback = S, the screen shows rows from (total - rows - S) to (total - S - 1)
-            // relative to the full buffer. We want abs_row to be visible.
             let scrollback_for_row = actual_scrollback.saturating_sub(abs_row);
             self.parser.screen_mut().set_scrollback(scrollback_for_row);
 
@@ -205,7 +210,11 @@ impl Terminal {
             for (byte_start, _) in text_lower.match_indices(&query_lower) {
                 let (start_col, len) =
                     match_display_span(&text_lower, byte_start, query_chars, &char_to_col, cols);
-                matches.push((abs_row, start_col, len));
+                matches.push(MatchSpan {
+                    row: abs_row,
+                    col: start_col,
+                    len,
+                });
             }
         }
 
@@ -224,10 +233,7 @@ impl Terminal {
         }
         let (rows, _) = self.parser.screen().size();
         let rows = rows as usize;
-
-        // Figure out max scrollback.
-        self.parser.screen_mut().set_scrollback(self.scrollback_len);
-        let max_scrollback = self.parser.screen().scrollback();
+        let max_scrollback = self.max_scrollback();
 
         // abs_row 0 is the topmost row. scrollback = max_scrollback shows the top.
         // scrollback = max_scrollback - abs_row puts abs_row at the top of viewport.
@@ -236,6 +242,14 @@ impl Terminal {
         let target = (max_scrollback as isize - abs_row as isize + (rows / 2) as isize)
             .clamp(0, max_scrollback as isize) as usize;
         self.parser.screen_mut().set_scrollback(target);
+    }
+
+    fn max_scrollback(&mut self) -> usize {
+        let saved = self.parser.screen().scrollback();
+        self.parser.screen_mut().set_scrollback(self.scrollback_len);
+        let max = self.parser.screen().scrollback();
+        self.parser.screen_mut().set_scrollback(saved);
+        max
     }
 }
 
@@ -351,17 +365,31 @@ mod tests {
     fn find_visible_matches_ascii() {
         let mut term = Terminal::new(5, 20, 100);
         term.process(b"hello world\r\nfoo hello bar\r\n");
-        let matches = term.find_visible_matches("hello").to_vec();
+        let matches = term.find_visible_matches("hello");
         assert_eq!(matches.len(), 2);
-        assert_eq!(matches[0], (0, 0, 5)); // row 0, col 0, len 5
-        assert_eq!(matches[1], (1, 4, 5)); // row 1, col 4, len 5
+        assert_eq!(
+            matches[0],
+            VisibleMatchSpan {
+                row: 0,
+                col: 0,
+                len: 5
+            }
+        );
+        assert_eq!(
+            matches[1],
+            VisibleMatchSpan {
+                row: 1,
+                col: 4,
+                len: 5
+            }
+        );
     }
 
     #[test]
     fn find_visible_matches_case_insensitive() {
         let mut term = Terminal::new(5, 20, 100);
         term.process(b"Hello HELLO hElLo\r\n");
-        let matches = term.find_visible_matches("hello").to_vec();
+        let matches = term.find_visible_matches("hello");
         assert_eq!(matches.len(), 3);
     }
 
@@ -376,14 +404,17 @@ mod tests {
     #[test]
     fn find_visible_matches_multibyte_utf8() {
         let mut term = Terminal::new(5, 40, 100);
-        // vt100 renders wide chars as 2 cells, but row_text produces one
-        // char per cell. The key thing: byte offsets in the lowercased
-        // string must be converted to char (cell) offsets.
         term.process("café match\r\n".as_bytes());
-        let matches = term.find_visible_matches("match").to_vec();
+        let matches = term.find_visible_matches("match");
         assert_eq!(matches.len(), 1);
-        // 'é' takes 1 cell in row_text, so "café " is 5 chars, "match" starts at col 5
-        assert_eq!(matches[0], (0, 5, 5));
+        assert_eq!(
+            matches[0],
+            VisibleMatchSpan {
+                row: 0,
+                col: 5,
+                len: 5
+            }
+        );
     }
 
     #[test]
@@ -398,28 +429,40 @@ mod tests {
         assert!(total_rows >= 10);
         // Matches should be in ascending row order.
         for pair in matches.windows(2) {
-            assert!(pair[0].0 < pair[1].0);
+            assert!(pair[0].row < pair[1].row);
         }
     }
 
     #[test]
     fn find_visible_matches_wide_char_before_match() {
         let mut term = Terminal::new(5, 40, 100);
-        // "占" is a wide char taking 2 display columns
         term.process("占test\r\n".as_bytes());
-        let matches = term.find_visible_matches("test").to_vec();
+        let matches = term.find_visible_matches("test");
         assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0], (0, 2, 4));
+        assert_eq!(
+            matches[0],
+            VisibleMatchSpan {
+                row: 0,
+                col: 2,
+                len: 4
+            }
+        );
     }
 
     #[test]
     fn find_visible_matches_wide_char_inside_match() {
         let mut term = Terminal::new(5, 40, 100);
         term.process("ab占cd\r\n".as_bytes());
-        let matches = term.find_visible_matches("占cd").to_vec();
+        let matches = term.find_visible_matches("占cd");
         assert_eq!(matches.len(), 1);
-        // "占" starts at display col 2, takes 2 cols; "cd" at cols 4-5; total len 4
-        assert_eq!(matches[0], (0, 2, 4));
+        assert_eq!(
+            matches[0],
+            VisibleMatchSpan {
+                row: 0,
+                col: 2,
+                len: 4
+            }
+        );
     }
 
     #[test]

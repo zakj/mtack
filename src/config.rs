@@ -2,17 +2,18 @@
 
 use miette::{Context, IntoDiagnostic, bail};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 type Result<T> = miette::Result<T>;
 
 const CONFIG_FILENAMES: &[&str] = &["mtack.kdl", ".mtack.kdl"];
 const DEFAULT_SCROLLBACK: usize = 2_000;
-const DEFAULT_SHUTDOWN_TIMEOUT: u64 = 5;
+const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, PartialEq)]
 pub struct Config {
     pub scrollback: usize,
-    pub shutdown_timeout: u64,
+    pub shutdown_timeout: Duration,
     pub procs: Vec<ProcConfig>,
 }
 
@@ -84,8 +85,8 @@ pub fn parse(input: &str) -> Result<Config> {
     reject_unknown_nodes(doc.nodes(), KNOWN_GLOBAL_NODES, &["proc"], "top level")?;
 
     let scrollback = parse_positive_int(&doc, "scrollback")?.unwrap_or(DEFAULT_SCROLLBACK);
-    let shutdown_timeout =
-        parse_nonneg_int(&doc, "shutdown-timeout")?.unwrap_or(DEFAULT_SHUTDOWN_TIMEOUT);
+    let shutdown_timeout = parse_nonneg_int(&doc, "shutdown-timeout")?
+        .map_or(DEFAULT_SHUTDOWN_TIMEOUT, Duration::from_secs);
 
     let proc_nodes: Vec<_> = doc
         .nodes()
@@ -378,7 +379,7 @@ proc "web" {
 "#;
         let config = parse(input).unwrap();
         assert_eq!(config.scrollback, 5000);
-        assert_eq!(config.shutdown_timeout, 10);
+        assert_eq!(config.shutdown_timeout, Duration::from_secs(10));
         assert_eq!(config.procs.len(), 2);
 
         let api = &config.procs[0];
@@ -488,7 +489,7 @@ shutdown-timeout 0
 proc "test" { cmd "echo"; }
 "#;
         let config = parse(input).unwrap();
-        assert_eq!(config.shutdown_timeout, 0);
+        assert_eq!(config.shutdown_timeout, Duration::ZERO);
     }
 
     #[test]
