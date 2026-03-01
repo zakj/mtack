@@ -209,7 +209,12 @@ impl App {
                             state: p.state(),
                         })
                         .collect();
-                    if let Some(idx) = crate::ui::tabs::tab_index_at_col(&tabs, mouse.column) {
+                    if let Some(idx) = crate::ui::tabs::tab_index_at_col(
+                        &tabs,
+                        self.selected,
+                        self.terminal_cols,
+                        mouse.column,
+                    ) {
                         self.selected = idx;
                         self.clear_search();
                         if self.mode == Mode::Focused {
