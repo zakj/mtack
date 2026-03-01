@@ -34,6 +34,7 @@ impl<'a> StatusBar<'a> {
 
 impl Widget for StatusBar<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        let max_width = area.width as usize;
         let mut spans = Vec::new();
 
         match self.ctx.mode {
@@ -71,6 +72,7 @@ impl Widget for StatusBar<'_> {
             }
             Mode::Normal => {
                 let searching = !self.ctx.search_query.is_empty();
+                // Badges/search state are always shown (small, high-priority).
                 if let Some(idx) = self.ctx.search_current {
                     spans.push(Span::styled(
                         format!(" {}/{} ", idx + 1, self.ctx.search_total),
@@ -89,27 +91,39 @@ impl Widget for StatusBar<'_> {
                 if self.scrolled_back {
                     push_badge(&mut spans, "SCROLL", Color::Yellow);
                 }
-                if searching || self.scrolled_back {
-                    push_hint(&mut spans, "esc", "clear");
-                }
+                let mut width: usize = spans.iter().map(|s| s.width()).sum();
+                let full = (searching || self.scrolled_back)
+                    && !try_push_hint(&mut spans, &mut width, max_width, "esc", "clear");
                 let running = self.process_state == State::Running;
-                for hint in hints::normal_hints() {
-                    let visible = match hint.bar_when {
-                        ShowWhen::Always => true,
-                        ShowWhen::WhenRunning => running,
-                        ShowWhen::WhenStopped => !running && self.process_state != State::Stopping,
-                        ShowWhen::WhenScrolled => self.scrolled_back,
-                    };
-                    if visible && let Some(bar_keys) = hint.bar {
-                        push_hint(&mut spans, bar_keys, hint.desc);
+                if !full {
+                    for hint in hints::normal_hints() {
+                        let visible = match hint.bar_when {
+                            ShowWhen::Always => true,
+                            ShowWhen::WhenRunning => running,
+                            ShowWhen::WhenStopped => {
+                                !running && self.process_state != State::Stopping
+                            }
+                            ShowWhen::WhenScrolled => self.scrolled_back,
+                        };
+                        if visible
+                            && let Some(bar_keys) = hint.bar
+                            && !try_push_hint(
+                                &mut spans, &mut width, max_width, bar_keys, hint.desc,
+                            )
+                        {
+                            break;
+                        }
                     }
                 }
             }
             Mode::Focused => {
                 push_badge(&mut spans, "FOCUS", Color::Green);
+                let mut width: usize = spans.iter().map(|s| s.width()).sum();
                 for hint in hints::focused_hints() {
-                    if let Some(bar_keys) = hint.bar {
-                        push_hint(&mut spans, bar_keys, hint.desc);
+                    if let Some(bar_keys) = hint.bar
+                        && !try_push_hint(&mut spans, &mut width, max_width, bar_keys, hint.desc)
+                    {
+                        break;
                     }
                 }
             }
@@ -138,10 +152,37 @@ fn push_badge(spans: &mut Vec<Span<'static>>, label: &str, bg: Color) {
     ));
 }
 
-fn push_hint(spans: &mut Vec<Span<'static>>, key: &str, desc: &str) {
-    if !spans.is_empty() {
+fn build_hint(has_prefix: bool, key: &str, desc: &str) -> (Vec<Span<'static>>, usize) {
+    let mut spans = Vec::new();
+    if has_prefix {
         spans.push(Span::raw("  "));
     }
-    hints::styled_keys(key, spans);
+    hints::styled_keys(key, &mut spans);
     spans.push(Span::raw(format!(" {desc}")));
+    let width = spans.iter().map(|s| s.width()).sum();
+    (spans, width)
+}
+
+fn push_hint(spans: &mut Vec<Span<'static>>, key: &str, desc: &str) {
+    let (hint, _) = build_hint(!spans.is_empty(), key, desc);
+    spans.extend(hint);
+}
+
+/// Push a hint only if it fits within `max_width`. Updates `width` and returns
+/// `true` on success, `false` if it didn't fit (callers should stop adding hints).
+fn try_push_hint(
+    spans: &mut Vec<Span<'static>>,
+    width: &mut usize,
+    max_width: usize,
+    key: &str,
+    desc: &str,
+) -> bool {
+    let (hint, w) = build_hint(*width > 0, key, desc);
+    if *width + w <= max_width {
+        spans.extend(hint);
+        *width += w;
+        true
+    } else {
+        false
+    }
 }
