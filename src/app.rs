@@ -497,62 +497,13 @@ impl App {
 }
 
 fn key_event_to_bytes(key: crossterm::event::KeyEvent) -> Vec<u8> {
-    use crossterm::event::{KeyCode, KeyModifiers};
-    let mut bytes = Vec::new();
-    match key.code {
-        KeyCode::Char(c) => {
-            if key.modifiers.contains(KeyModifiers::CONTROL) {
-                let byte = match c.to_ascii_lowercase() {
-                    c @ 'a'..='z' => Some(c as u8 - b'a' + 1),
-                    '@' | ' ' => Some(0x00),
-                    '[' => Some(0x1b),
-                    '\\' => Some(0x1c),
-                    ']' => Some(0x1d),
-                    '^' => Some(0x1e),
-                    '_' => Some(0x1f),
-                    _ => None,
-                };
-                if let Some(b) = byte {
-                    bytes.push(b);
-                }
-            } else {
-                let mut buf = [0u8; 4];
-                bytes.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
-            }
-        }
-        KeyCode::Enter => bytes.push(b'\r'),
-        KeyCode::Backspace => bytes.push(0x7f),
-        KeyCode::Tab => bytes.push(b'\t'),
-        KeyCode::Esc => bytes.push(0x1b),
-        KeyCode::Up => bytes.extend_from_slice(b"\x1b[A"),
-        KeyCode::Down => bytes.extend_from_slice(b"\x1b[B"),
-        KeyCode::Right => bytes.extend_from_slice(b"\x1b[C"),
-        KeyCode::Left => bytes.extend_from_slice(b"\x1b[D"),
-        KeyCode::Home => bytes.extend_from_slice(b"\x1b[H"),
-        KeyCode::End => bytes.extend_from_slice(b"\x1b[F"),
-        KeyCode::PageUp => bytes.extend_from_slice(b"\x1b[5~"),
-        KeyCode::PageDown => bytes.extend_from_slice(b"\x1b[6~"),
-        KeyCode::Delete => bytes.extend_from_slice(b"\x1b[3~"),
-        KeyCode::Insert => bytes.extend_from_slice(b"\x1b[2~"),
-        KeyCode::F(n) => {
-            let seq = match n {
-                1 => "\x1bOP",
-                2 => "\x1bOQ",
-                3 => "\x1bOR",
-                4 => "\x1bOS",
-                5 => "\x1b[15~",
-                6 => "\x1b[17~",
-                7 => "\x1b[18~",
-                8 => "\x1b[19~",
-                9 => "\x1b[20~",
-                10 => "\x1b[21~",
-                11 => "\x1b[23~",
-                12 => "\x1b[24~",
-                _ => return bytes,
-            };
-            bytes.extend_from_slice(seq.as_bytes());
-        }
-        _ => {}
+    let Ok(tkey) = terminput_crossterm::to_terminput_key(key) else {
+        return Vec::new();
+    };
+    let event = terminput::Event::Key(tkey);
+    let mut buf = [0u8; 64];
+    match event.encode(&mut buf, terminput::Encoding::Xterm) {
+        Ok(n) => buf[..n].to_vec(),
+        Err(_) => Vec::new(),
     }
-    bytes
 }
