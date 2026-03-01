@@ -108,6 +108,16 @@ impl Terminal {
         self.parser.screen().alternate_screen()
     }
 
+    /// Total row count (scrollback + visible) without scanning content.
+    pub fn total_rows(&mut self) -> usize {
+        let saved = self.parser.screen().scrollback();
+        self.parser.screen_mut().set_scrollback(self.scrollback_len);
+        let max_sb = self.parser.screen().scrollback();
+        self.parser.screen_mut().set_scrollback(saved);
+        let (rows, _) = self.parser.screen().size();
+        max_sb + rows as usize
+    }
+
     /// Extract text content from a single visible row, skipping wide continuation
     /// cells. Returns the clean text and a mapping from char index to display column.
     fn row_text_with_columns(&self, row: u16) -> (String, Vec<u16>) {

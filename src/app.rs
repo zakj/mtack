@@ -391,27 +391,20 @@ impl App {
         self.search_no_matches = false;
     }
 
-    // Re-run find_all_matches and navigate to the next (or previous) match
-    // relative to the current viewport center. Fresh scan avoids stale positions
-    // when streaming output shifts the buffer.
+    // Navigate to the next (or previous) match relative to the current viewport
+    // center, reusing matches from the initial search accept. Positions may drift
+    // slightly if streaming output shifts the scrollback buffer; the user can
+    // re-search to refresh.
     fn search_navigate(&mut self, forward: bool) {
-        if self.search_query.is_empty()
+        if self.search_matches.is_empty()
             || self.processes[self.selected]
                 .terminal()
                 .is_alternate_screen()
         {
             return;
         }
-        let (matches, total_rows) = self.processes[self.selected]
-            .terminal_mut()
-            .find_all_matches(&self.search_query);
-        self.search_matches = matches.to_vec();
-        self.search_no_matches = self.search_matches.is_empty();
-        if self.search_matches.is_empty() {
-            self.search_current = None;
-            return;
-        }
 
+        let total_rows = self.processes[self.selected].terminal_mut().total_rows();
         let scrollback = self.processes[self.selected].terminal().scrollback();
         let (rows, _) = self.processes[self.selected].terminal().size();
         let visible_center = total_rows.saturating_sub(scrollback + rows as usize / 2);
