@@ -145,20 +145,22 @@ impl App {
                     }
                 }
                 Some(ct_event) = crossterm_events.next() => {
-                    if let Ok(event) = ct_event {
-                        let was_focused = self.focused;
-                        self.handle_crossterm_event(event).await?;
-                        if self.focused != was_focused {
-                            let period = if self.focused {
-                                RENDER_INTERVAL_FOCUSED
-                            } else {
-                                RENDER_INTERVAL_UNFOCUSED
-                            };
-                            render_interval = tokio::time::interval(period);
-                        }
-                        self.processes[self.selected].sync_paused();
-                        self.dirty = true;
+                    let event = match ct_event {
+                        Ok(event) => event,
+                        Err(_) => break,
+                    };
+                    let was_focused = self.focused;
+                    self.handle_crossterm_event(event).await?;
+                    if self.focused != was_focused {
+                        let period = if self.focused {
+                            RENDER_INTERVAL_FOCUSED
+                        } else {
+                            RENDER_INTERVAL_UNFOCUSED
+                        };
+                        render_interval = tokio::time::interval(period);
                     }
+                    self.processes[self.selected].sync_paused();
+                    self.dirty = true;
                 }
                 Some(event) = self.event_rx.recv() => {
                     let needs_render = match &event {
