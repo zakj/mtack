@@ -53,8 +53,15 @@ pub fn resolve(key: KeyEvent, mode: Mode, unfocus_key: &UnfocusKey) -> Option<Ac
         Mode::Normal => resolve_normal(key),
         Mode::Search => resolve_search(key),
         Mode::ConfirmQuit => resolve_confirm_quit(key),
-        Mode::Quitting => None,
+        Mode::Quitting => resolve_quitting(key),
     }
+}
+
+fn resolve_quitting(key: KeyEvent) -> Option<Action> {
+    if key.code == KeyCode::Char('c') && key.modifiers == KeyModifiers::CONTROL {
+        return Some(Action::ForceQuit);
+    }
+    None
 }
 
 fn resolve_confirm_quit(key: KeyEvent) -> Option<Action> {
@@ -83,6 +90,9 @@ fn matches_unfocus_key(key: &KeyEvent, unfocus_key: &UnfocusKey) -> bool {
 }
 
 fn resolve_search(key: KeyEvent) -> Option<Action> {
+    if key.code == KeyCode::Char('c') && key.modifiers == KeyModifiers::CONTROL {
+        return Some(Action::SearchCancel);
+    }
     let mods = key.modifiers - KeyModifiers::SHIFT;
     if !mods.is_empty() {
         return None;
@@ -318,6 +328,30 @@ mod tests {
         assert_eq!(
             resolve(key(KeyCode::Esc), Mode::ConfirmQuit, &UnfocusKey::Esc),
             Some(Action::CancelQuit)
+        );
+    }
+
+    #[test]
+    fn quitting_ctrl_c_force_quits() {
+        assert_eq!(
+            resolve(ctrl('c'), Mode::Quitting, &UnfocusKey::Esc),
+            Some(Action::ForceQuit)
+        );
+    }
+
+    #[test]
+    fn quitting_ignores_other_keys() {
+        assert_eq!(
+            resolve(key(KeyCode::Char('q')), Mode::Quitting, &UnfocusKey::Esc),
+            None
+        );
+    }
+
+    #[test]
+    fn search_ctrl_c_cancels() {
+        assert_eq!(
+            resolve(ctrl('c'), Mode::Search, &UnfocusKey::Esc),
+            Some(Action::SearchCancel)
         );
     }
 }
