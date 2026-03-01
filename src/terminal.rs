@@ -57,7 +57,7 @@ impl Terminal {
     }
 
     pub fn resize(&mut self, rows: u16, cols: u16) {
-        self.parser.screen_mut().set_size(rows, cols);
+        self.parser.screen_mut().set_size(rows.max(1), cols.max(1));
         self.search_dirty = true;
     }
 

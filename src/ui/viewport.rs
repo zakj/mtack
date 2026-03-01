@@ -31,7 +31,7 @@ impl Widget for Viewport<'_> {
         let match_style = Style::default().fg(Color::Black).bg(Color::Yellow);
 
         for &(row, col, len) in self.matches {
-            for c in col..col + len {
+            for c in col..col.saturating_add(len) {
                 let x = area.x + c;
                 let y = area.y + row;
                 if x < area.x + area.width && y < area.y + area.height {

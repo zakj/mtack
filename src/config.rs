@@ -275,8 +275,12 @@ fn parse_env(doc: &kdl::KdlDocument) -> Result<Vec<(String, String)>> {
         .children()
         .ok_or_else(|| miette::miette!("env must have a child block"))?;
     let mut env = Vec::new();
+    let mut seen = std::collections::HashSet::new();
     for child in children.nodes() {
         let key = child.name().value().to_string();
+        if !seen.insert(key.clone()) {
+            bail!("duplicate env variable {key:?}");
+        }
         let val = child
             .get(0)
             .and_then(|v| v.as_string())
@@ -603,6 +607,21 @@ proc "test" { cmd "echo"; }
         let input = r#"proc "test" { cmd "echo" 42; }"#;
         let err = parse(input).unwrap_err();
         assert!(err.to_string().contains("must be strings"));
+    }
+
+    #[test]
+    fn error_duplicate_env_keys() {
+        let input = r#"
+proc "test" {
+    cmd "echo"
+    env {
+        FOO "a"
+        FOO "b"
+    }
+}
+"#;
+        let err = parse(input).unwrap_err();
+        assert!(err.to_string().contains("duplicate env variable"));
     }
 
     #[test]
