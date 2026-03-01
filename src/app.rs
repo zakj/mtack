@@ -98,46 +98,44 @@ impl App {
 
         loop {
             tokio::select! {
-                _ = render_interval.tick() => {
-                    if dirty {
-                        let visible_matches: Vec<(u16, u16, u16)> =
-                            if !self.search_query.is_empty() && self.mode != Mode::Search {
-                                self.processes[self.selected]
-                                    .terminal_mut()
-                                    .find_visible_matches(&self.search_query)
-                                    .iter()
-                                    .map(|&(row, col, len)| (row, col as u16, len as u16))
-                                    .collect()
-                            } else {
-                                Vec::new()
-                            };
+                _ = render_interval.tick(), if dirty => {
+                    let visible_matches: Vec<(u16, u16, u16)> =
+                        if !self.search_query.is_empty() && self.mode != Mode::Search {
+                            self.processes[self.selected]
+                                .terminal_mut()
+                                .find_visible_matches(&self.search_query)
+                                .iter()
+                                .map(|&(row, col, len)| (row, col as u16, len as u16))
+                                .collect()
+                        } else {
+                            Vec::new()
+                        };
 
-                        terminal
-                            .draw(|frame| {
-                                let ctx = crate::ui::RenderContext {
-                                    processes: &self.processes,
-                                    selected: self.selected,
-                                    mode: self.mode,
-                                    show_help: self.show_help,
-                                    search_query: &self.search_query,
-                                    last_search_query: &self.last_search_query,
-                                    search_total: self.search_matches.len(),
-                                    search_current: self.search_current,
-                                    search_no_matches: self.search_no_matches,
-                                    remaining_count: self
-                                        .processes
-                                        .iter()
-                                        .filter(|p| {
-                                            matches!(p.state(), State::Running | State::Stopping)
-                                        })
-                                        .count(),
-                                    visible_matches: &visible_matches,
-                                };
-                                crate::ui::render(frame, &ctx);
-                            })
-                            .map_err(|e| miette::miette!("{e}"))?;
-                        dirty = false;
-                    }
+                    terminal
+                        .draw(|frame| {
+                            let ctx = crate::ui::RenderContext {
+                                processes: &self.processes,
+                                selected: self.selected,
+                                mode: self.mode,
+                                show_help: self.show_help,
+                                search_query: &self.search_query,
+                                last_search_query: &self.last_search_query,
+                                search_total: self.search_matches.len(),
+                                search_current: self.search_current,
+                                search_no_matches: self.search_no_matches,
+                                remaining_count: self
+                                    .processes
+                                    .iter()
+                                    .filter(|p| {
+                                        matches!(p.state(), State::Running | State::Stopping)
+                                    })
+                                    .count(),
+                                visible_matches: &visible_matches,
+                            };
+                            crate::ui::render(frame, &ctx);
+                        })
+                        .map_err(|e| miette::miette!("{e}"))?;
+                    dirty = false;
                     if self.should_quit {
                         break;
                     }
