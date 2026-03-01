@@ -11,6 +11,11 @@ lto = true
 codegen-units = 1
 strip = true
 
+[profile.profiling]
+inherits = "release"
+strip = false
+debug = 2
+
 [dependencies]
 bytes = "1"
 clap = { version = "4.5.60", features = ["derive"] }

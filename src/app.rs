@@ -160,8 +160,12 @@ impl App {
                     }
                 }
                 Some(event) = self.event_rx.recv() => {
+                    let needs_render = match &event {
+                        Event::PtyOutput { id, .. } => *id == self.selected,
+                        Event::ProcessExited { .. } => true,
+                    };
                     self.handle_app_event(event).await?;
-                    dirty = true;
+                    dirty |= needs_render;
                 }
                 _ = sigterm.recv() => {
                     self.begin_quit();
