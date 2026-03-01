@@ -34,14 +34,22 @@ async fn main() -> miette::Result<()> {
     };
 
     let mut terminal = ratatui::init();
-    crossterm::execute!(std::io::stdout(), crossterm::event::EnableMouseCapture)
-        .map_err(|e| miette::miette!("{e}"))?;
+    crossterm::execute!(
+        std::io::stdout(),
+        crossterm::event::EnableMouseCapture,
+        crossterm::event::EnableFocusChange,
+    )
+    .map_err(|e| miette::miette!("{e}"))?;
 
     let mut app = app::App::new(&config);
     let result = app.run(&mut terminal).await;
 
-    crossterm::execute!(std::io::stdout(), crossterm::event::DisableMouseCapture)
-        .map_err(|e| miette::miette!("{e}"))?;
+    crossterm::execute!(
+        std::io::stdout(),
+        crossterm::event::DisableMouseCapture,
+        crossterm::event::DisableFocusChange,
+    )
+    .map_err(|e| miette::miette!("{e}"))?;
     ratatui::restore();
 
     result

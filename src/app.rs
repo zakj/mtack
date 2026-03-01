@@ -13,6 +13,8 @@ use tokio::sync::mpsc;
 
 const EVENT_CHANNEL_SIZE: usize = 256;
 const MOUSE_SCROLL_LINES: usize = 3;
+const RENDER_INTERVAL_FOCUSED: Duration = Duration::from_millis(16);
+const RENDER_INTERVAL_UNFOCUSED: Duration = Duration::from_millis(100);
 
 pub struct App {
     processes: Vec<Process>,
@@ -28,6 +30,7 @@ pub struct App {
     search_matches: Vec<(usize, usize, usize)>,
     search_current: Option<usize>,
     search_no_matches: bool,
+    focused: bool,
 }
 
 impl App {
@@ -66,6 +69,7 @@ impl App {
             search_matches: Vec::new(),
             search_current: None,
             search_no_matches: false,
+            focused: true,
         }
     }
 
@@ -84,7 +88,7 @@ impl App {
         }
 
         let mut crossterm_events = EventStream::new();
-        let mut render_interval = tokio::time::interval(Duration::from_millis(16));
+        let mut render_interval = tokio::time::interval(RENDER_INTERVAL_FOCUSED);
         let mut dirty = true;
 
         let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
@@ -143,7 +147,16 @@ impl App {
                 }
                 Some(ct_event) = crossterm_events.next() => {
                     if let Ok(event) = ct_event {
+                        let was_focused = self.focused;
                         self.handle_crossterm_event(event).await?;
+                        if self.focused != was_focused {
+                            let period = if self.focused {
+                                RENDER_INTERVAL_FOCUSED
+                            } else {
+                                RENDER_INTERVAL_UNFOCUSED
+                            };
+                            render_interval = tokio::time::interval(period);
+                        }
                         self.processes[self.selected].sync_paused();
                         dirty = true;
                     }
@@ -209,6 +222,8 @@ impl App {
                 self.terminal_rows = rows;
                 self.resize_processes();
             }
+            CtEvent::FocusGained => self.focused = true,
+            CtEvent::FocusLost => self.focused = false,
             _ => {}
         }
         Ok(())
