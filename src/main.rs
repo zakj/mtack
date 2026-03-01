@@ -18,7 +18,7 @@ struct Args {
     config: Option<PathBuf>,
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> miette::Result<()> {
     let args = Args::parse();
     let config = match args.config {
