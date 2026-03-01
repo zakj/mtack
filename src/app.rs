@@ -25,6 +25,7 @@ pub struct App {
     terminal_rows: u16,
     event_rx: mpsc::Receiver<Event>,
     should_quit: bool,
+    dirty: bool,
     search_query: String,
     last_search_query: String,
     search_matches: Vec<(usize, usize, usize)>,
@@ -64,6 +65,7 @@ impl App {
             terminal_rows: 24,
             event_rx,
             should_quit: false,
+            dirty: true,
             search_query: String::new(),
             last_search_query: String::new(),
             search_matches: Vec::new(),
@@ -89,7 +91,6 @@ impl App {
 
         let mut crossterm_events = EventStream::new();
         let mut render_interval = tokio::time::interval(RENDER_INTERVAL_FOCUSED);
-        let mut dirty = true;
 
         let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
             .map_err(|e| miette::miette!("{e}"))?;
@@ -98,7 +99,7 @@ impl App {
 
         loop {
             tokio::select! {
-                _ = render_interval.tick(), if dirty => {
+                _ = render_interval.tick(), if self.dirty => {
                     let visible_matches: Vec<(u16, u16, u16)> =
                         if !self.search_query.is_empty() && self.mode != Mode::Search {
                             self.processes[self.selected]
@@ -135,7 +136,7 @@ impl App {
                             crate::ui::render(frame, &ctx);
                         })
                         .map_err(|e| miette::miette!("{e}"))?;
-                    dirty = false;
+                    self.dirty = false;
                     if self.should_quit {
                         break;
                     }
@@ -156,7 +157,7 @@ impl App {
                             render_interval = tokio::time::interval(period);
                         }
                         self.processes[self.selected].sync_paused();
-                        dirty = true;
+                        self.dirty = true;
                     }
                 }
                 Some(event) = self.event_rx.recv() => {
@@ -165,15 +166,13 @@ impl App {
                         Event::ProcessExited { .. } => true,
                     };
                     self.handle_app_event(event).await?;
-                    dirty |= needs_render;
+                    self.dirty |= needs_render;
                 }
                 _ = sigterm.recv() => {
                     self.begin_quit();
-                    dirty = true;
                 }
                 _ = sighup.recv() => {
                     self.begin_quit();
-                    dirty = true;
                 }
             }
         }
@@ -375,7 +374,12 @@ impl App {
                 }
             }
             Action::ForceQuit => {
-                self.begin_quit();
+                if self.mode == Mode::Quitting {
+                    self.should_quit = true;
+                    self.dirty = true;
+                } else {
+                    self.begin_quit();
+                }
             }
             Action::CancelQuit => {
                 self.mode = Mode::Normal;
@@ -464,10 +468,12 @@ impl App {
     fn begin_quit(&mut self) {
         if self.all_stopped() {
             self.should_quit = true;
+            self.dirty = true;
             return;
         }
         self.mode = Mode::Quitting;
         self.show_help = false;
+        self.dirty = true;
         self.resize_processes();
         for proc in &mut self.processes {
             proc.stop();
