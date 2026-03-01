@@ -79,7 +79,7 @@ parent directories. Override with `-c <path>`.
 
 | Option             | Default | Description                               |
 |--------------------|---------|-------------------------------------------|
-| `scrollback`       | 10000   | Lines of scrollback per process           |
+| `scrollback`       | 2000    | Lines of scrollback per process           |
 | `shutdown-timeout` | 5       | Seconds before SIGKILL on shutdown        |
 
 ### Process options
@@ -93,5 +93,6 @@ parent directories. Override with `-c <path>`.
 | `autostart`   | `#true` | Start automatically on launch                     |
 | `autorestart` | `#true` | Restart on exit                                   |
 | `unfocus-key` | `Esc`   | Key to exit focus mode (for processes that need Esc)|
+| `scrollback`  | global  | Override global scrollback for this process       |
 
 Each process must have exactly one of `cmd` or `shell`.

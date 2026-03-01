@@ -48,7 +48,7 @@ impl App {
                     proc_config.clone(),
                     24,
                     80,
-                    config.scrollback,
+                    proc_config.scrollback(config.scrollback),
                     Duration::from_secs(config.shutdown_timeout),
                     event_tx.clone(),
                 )

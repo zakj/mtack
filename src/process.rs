@@ -246,11 +246,12 @@ mod tests {
     fn test_config(autorestart: bool) -> ProcConfig {
         ProcConfig {
             name: "test".into(),
+            autostart: true,
+            autorestart,
             cmd: vec!["echo".into()],
             cwd: None,
             env: Vec::new(),
-            autostart: true,
-            autorestart,
+            scrollback: None,
             unfocus_key: UnfocusKey::Esc,
         }
     }

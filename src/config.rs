@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 type Result<T> = miette::Result<T>;
 
 const CONFIG_FILENAMES: &[&str] = &["mtack.kdl", ".mtack.kdl"];
-const DEFAULT_SCROLLBACK: usize = 10_000;
+const DEFAULT_SCROLLBACK: usize = 2_000;
 const DEFAULT_SHUTDOWN_TIMEOUT: u64 = 5;
 
 #[derive(Debug, PartialEq)]
@@ -19,12 +19,19 @@ pub struct Config {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProcConfig {
     pub name: String,
+    pub autostart: bool,
+    pub autorestart: bool,
     pub cmd: Vec<String>,
     pub cwd: Option<PathBuf>,
     pub env: Vec<(String, String)>,
-    pub autostart: bool,
-    pub autorestart: bool,
+    pub(crate) scrollback: Option<usize>,
     pub unfocus_key: UnfocusKey,
+}
+
+impl ProcConfig {
+    pub fn scrollback(&self, global: usize) -> usize {
+        self.scrollback.unwrap_or(global)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -34,14 +41,15 @@ pub enum UnfocusKey {
     Ctrl(char),
 }
 
-const KNOWN_GLOBAL_NODES: &[&str] = &["scrollback", "shutdown-timeout", "proc"];
+const KNOWN_GLOBAL_NODES: &[&str] = &["proc", "scrollback", "shutdown-timeout"];
 const KNOWN_PROC_NODES: &[&str] = &[
-    "cmd",
-    "shell",
-    "cwd",
-    "env",
     "autostart",
     "autorestart",
+    "cmd",
+    "cwd",
+    "env",
+    "scrollback",
+    "shell",
     "unfocus-key",
 ];
 
@@ -201,14 +209,16 @@ fn parse_proc(node: &kdl::KdlNode) -> Result<ProcConfig> {
     let autostart = parse_bool_field(children, "autostart")?.unwrap_or(true);
     let autorestart = parse_bool_field(children, "autorestart")?.unwrap_or(true);
     let unfocus_key = parse_unfocus_key(children)?;
+    let scrollback = parse_positive_int(children, "scrollback")?;
 
     Ok(ProcConfig {
         name,
+        autostart,
+        autorestart,
         cmd,
         cwd,
         env,
-        autostart,
-        autorestart,
+        scrollback,
         unfocus_key,
     })
 }
@@ -655,5 +665,24 @@ proc "test" { cmd "echo"; }
         let input = r#"proc "test" { shell ""; }"#;
         let err = parse(input).unwrap_err();
         assert!(err.to_string().contains("must not be empty"));
+    }
+
+    #[test]
+    fn proc_scrollback_override() {
+        let input = r#"
+scrollback 5000
+proc "a" { cmd "echo"; scrollback 50000; }
+proc "b" { cmd "echo"; }
+"#;
+        let config = parse(input).unwrap();
+        assert_eq!(config.procs[0].scrollback(config.scrollback), 50000);
+        assert_eq!(config.procs[1].scrollback(config.scrollback), 5000);
+    }
+
+    #[test]
+    fn error_proc_scrollback_not_positive() {
+        let input = r#"proc "test" { cmd "echo"; scrollback 0; }"#;
+        let err = parse(input).unwrap_err();
+        assert!(err.to_string().contains("positive integer"));
     }
 }
