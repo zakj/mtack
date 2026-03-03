@@ -45,11 +45,7 @@ impl Terminal {
         // When scrolled back, compensate for new lines entering the scrollback
         // buffer so the viewport stays pinned to the same content.
         let sb = self.parser.screen().scrollback();
-        let max_before = if sb > 0 {
-            Some(self.max_scrollback())
-        } else {
-            None
-        };
+        let max_before = (sb > 0).then(|| self.max_scrollback());
 
         self.parser.process(data);
         self.search_dirty = true;

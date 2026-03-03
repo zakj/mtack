@@ -100,7 +100,7 @@ impl Process {
             .args(&self.config.cmd[1..])
             .env("TERM", "xterm-256color")
             .envs(self.config.env.iter().map(|(k, v)| (k, v)));
-        if let Some(ref cwd) = self.config.cwd {
+        if let Some(cwd) = &self.config.cwd {
             cmd = cmd.current_dir(cwd);
         }
 
@@ -165,7 +165,7 @@ impl Process {
     }
 
     pub async fn write(&mut self, data: &[u8]) -> miette::Result<()> {
-        if let Some(ref mut writer) = self.pty_writer {
+        if let Some(writer) = &mut self.pty_writer {
             writer
                 .write_all(data)
                 .await
@@ -176,7 +176,7 @@ impl Process {
 
     pub fn resize(&mut self, rows: u16, cols: u16) {
         self.terminal.resize(rows, cols);
-        if let Some(ref writer) = self.pty_writer {
+        if let Some(writer) = &self.pty_writer {
             let _ = writer.resize(Size::new(rows, cols));
         }
     }

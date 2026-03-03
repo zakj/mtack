@@ -50,7 +50,7 @@ impl Widget for StatusBar<'_> {
             Mode::Search => {
                 spans.push(Span::styled("/", Style::default().fg(Color::Yellow)));
                 if self.ctx.search_query.is_empty() && !self.ctx.last_search_query.is_empty() {
-                    let placeholder = self.ctx.last_search_query.to_string();
+                    let placeholder = self.ctx.last_search_query;
                     let first = &placeholder[..placeholder.ceil_char_boundary(1)];
                     let rest = &placeholder[first.len()..];
                     spans.push(Span::styled(

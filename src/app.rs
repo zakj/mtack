@@ -84,9 +84,9 @@ impl App {
         self.resize_processes();
 
         // Auto-start processes.
-        for i in 0..self.processes.len() {
-            if self.processes[i].autostart() {
-                self.processes[i].start()?;
+        for proc in &mut self.processes {
+            if proc.autostart() {
+                proc.start()?;
             }
         }
 
