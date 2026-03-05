@@ -22,7 +22,8 @@ pub struct ProcConfig {
     pub name: String,
     pub autostart: bool,
     pub autorestart: bool,
-    pub cmd: Vec<String>,
+    pub program: String,
+    pub args: Vec<String>,
     pub cwd: Option<PathBuf>,
     pub env: Vec<(String, String)>,
     pub(crate) scrollback: Option<usize>,
@@ -200,7 +201,7 @@ fn parse_proc(node: &kdl::KdlNode) -> Result<ProcConfig> {
         &format!("proc {name:?}"),
     )?;
 
-    let cmd = parse_command(children, &name)?;
+    let (program, args) = parse_command(children, &name)?;
     let cwd = children
         .get_arg("cwd")
         .and_then(|v| v.as_string())
@@ -216,7 +217,8 @@ fn parse_proc(node: &kdl::KdlNode) -> Result<ProcConfig> {
         name,
         autostart,
         autorestart,
-        cmd,
+        program,
+        args,
         cwd,
         env,
         scrollback,
@@ -224,7 +226,7 @@ fn parse_proc(node: &kdl::KdlNode) -> Result<ProcConfig> {
     })
 }
 
-fn parse_command(doc: &kdl::KdlDocument, proc_name: &str) -> Result<Vec<String>> {
+fn parse_command(doc: &kdl::KdlDocument, proc_name: &str) -> Result<(String, Vec<String>)> {
     let has_cmd = doc.get("cmd").is_some();
     let has_shell = doc.get("shell").is_some();
     match (has_cmd, has_shell) {
@@ -235,7 +237,7 @@ fn parse_command(doc: &kdl::KdlDocument, proc_name: &str) -> Result<Vec<String>>
     }
 }
 
-fn parse_cmd(doc: &kdl::KdlDocument, proc_name: &str) -> Result<Vec<String>> {
+fn parse_cmd(doc: &kdl::KdlDocument, proc_name: &str) -> Result<(String, Vec<String>)> {
     let node = doc.get("cmd").unwrap();
     let positional: Vec<_> = node
         .entries()
@@ -245,17 +247,20 @@ fn parse_cmd(doc: &kdl::KdlDocument, proc_name: &str) -> Result<Vec<String>> {
     if positional.is_empty() {
         bail!("cmd in proc {proc_name:?} must have at least one argument");
     }
-    positional
+    let strings: Vec<String> = positional
         .into_iter()
         .map(|e| {
             e.value().as_string().map(String::from).ok_or_else(|| {
                 miette::miette!("cmd arguments must be strings in proc {proc_name:?}")
             })
         })
-        .collect()
+        .collect::<Result<_>>()?;
+    let mut iter = strings.into_iter();
+    let program = iter.next().unwrap();
+    Ok((program, iter.collect()))
 }
 
-fn parse_shell(doc: &kdl::KdlDocument, proc_name: &str) -> Result<Vec<String>> {
+fn parse_shell(doc: &kdl::KdlDocument, proc_name: &str) -> Result<(String, Vec<String>)> {
     let node = doc.get("shell").unwrap();
     let val = node
         .get(0)
@@ -265,7 +270,7 @@ fn parse_shell(doc: &kdl::KdlDocument, proc_name: &str) -> Result<Vec<String>> {
         bail!("shell in proc {proc_name:?} must not be empty");
     }
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string());
-    Ok(vec![shell, "-c".to_string(), val.to_string()])
+    Ok((shell, vec!["-c".to_string(), val.to_string()]))
 }
 
 fn parse_env(doc: &kdl::KdlDocument) -> Result<Vec<(String, String)>> {
@@ -347,7 +352,8 @@ mod tests {
         assert_eq!(config.shutdown_timeout, DEFAULT_SHUTDOWN_TIMEOUT);
         assert_eq!(config.procs.len(), 1);
         assert_eq!(config.procs[0].name, "test");
-        assert_eq!(config.procs[0].cmd, vec!["echo", "hello"]);
+        assert_eq!(config.procs[0].program, "echo");
+        assert_eq!(config.procs[0].args, vec!["hello"]);
         assert_eq!(config.procs[0].cwd, None);
         assert!(config.procs[0].env.is_empty());
         assert!(config.procs[0].autostart);
@@ -384,7 +390,8 @@ proc "web" {
 
         let api = &config.procs[0];
         assert_eq!(api.name, "api");
-        assert_eq!(api.cmd, vec!["docker", "compose", "up"]);
+        assert_eq!(api.program, "docker");
+        assert_eq!(api.args, vec!["compose", "up"]);
         assert!(api.cwd.is_some());
         assert!(api.cwd.as_ref().unwrap().ends_with("repos/api"));
         assert_eq!(
@@ -400,7 +407,8 @@ proc "web" {
 
         let web = &config.procs[1];
         assert_eq!(web.name, "web");
-        assert_eq!(web.cmd, vec!["pnpm", "dev"]);
+        assert_eq!(web.program, "pnpm");
+        assert_eq!(web.args, vec!["dev"]);
         assert!(web.autostart);
         assert!(web.autorestart);
     }
@@ -667,10 +675,7 @@ proc "test" { cmd "echo"; }
     fn shell_basic_parse() {
         let input = r#"proc "test" { shell "echo hello | cat"; }"#;
         let config = parse(input).unwrap();
-        let cmd = &config.procs[0].cmd;
-        assert_eq!(cmd.len(), 3);
-        assert_eq!(cmd[1], "-c");
-        assert_eq!(cmd[2], "echo hello | cat");
+        assert_eq!(config.procs[0].args, vec!["-c", "echo hello | cat"]);
     }
 
     #[test]

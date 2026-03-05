@@ -112,8 +112,8 @@ impl Process {
         pty.resize(Size::new(rows, cols))
             .map_err(|e| miette::miette!("{e}"))?;
 
-        let mut cmd = pty_process::Command::new(&self.config.cmd[0])
-            .args(&self.config.cmd[1..])
+        let mut cmd = pty_process::Command::new(&self.config.program)
+            .args(&self.config.args)
             .env("TERM", "xterm-256color")
             .envs(self.config.env.iter().map(|(k, v)| (k, v)));
         if let Some(cwd) = &self.config.cwd {
@@ -283,7 +283,8 @@ mod tests {
             name: "test".into(),
             autostart: true,
             autorestart,
-            cmd: vec!["echo".into()],
+            program: "echo".into(),
+            args: Vec::new(),
             cwd: None,
             env: Vec::new(),
             scrollback: None,
