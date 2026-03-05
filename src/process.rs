@@ -22,18 +22,38 @@ pub enum State {
 
 const CRASH_LOOP_THRESHOLD: Duration = Duration::from_secs(1);
 
+enum Lifecycle {
+    Stopped,
+    Running {
+        writer: pty_process::OwnedWritePty,
+        pid: Option<u32>,
+        handle: JoinHandle<()>,
+    },
+    Stopping {
+        pending_restart: bool,
+    },
+    Failed,
+}
+
+impl Lifecycle {
+    fn state(&self) -> State {
+        match self {
+            Lifecycle::Stopped => State::Stopped,
+            Lifecycle::Running { .. } => State::Running,
+            Lifecycle::Stopping { .. } => State::Stopping,
+            Lifecycle::Failed => State::Failed,
+        }
+    }
+}
+
 pub struct Process {
     id: usize,
     name: String,
     terminal: Terminal,
-    state: State,
+    lifecycle: Lifecycle,
     config: ProcConfig,
     shutdown_timeout: Duration,
     event_tx: mpsc::Sender<Event>,
-    pty_writer: Option<pty_process::OwnedWritePty>,
-    child_pid: Option<u32>,
-    watcher_handle: Option<JoinHandle<()>>,
-    pending_restart: bool,
     pause_tx: watch::Sender<bool>,
     last_start_time: Option<Instant>,
 }
@@ -53,14 +73,10 @@ impl Process {
             id,
             name: config.name.clone(),
             terminal: Terminal::new(rows, cols, scrollback),
-            state: State::Stopped,
+            lifecycle: Lifecycle::Stopped,
             config,
             shutdown_timeout,
             event_tx,
-            pty_writer: None,
-            child_pid: None,
-            watcher_handle: None,
-            pending_restart: false,
             pause_tx,
             last_start_time: None,
         }
@@ -79,11 +95,11 @@ impl Process {
     }
 
     pub fn state(&self) -> State {
-        self.state
+        self.lifecycle.state()
     }
 
     pub fn start(&mut self) -> miette::Result<()> {
-        if self.state == State::Running {
+        if matches!(self.lifecycle, Lifecycle::Running { .. }) {
             return Ok(());
         }
 
@@ -105,31 +121,45 @@ impl Process {
         }
 
         let child = cmd.spawn(pts).map_err(|e| miette::miette!("{e}"))?;
-        self.child_pid = child.id();
-        let (pty_reader, pty_writer) = pty.into_split();
+        let pid = child.id();
+        let (pty_reader, writer) = pty.into_split();
 
-        self.pty_writer = Some(pty_writer);
-        self.state = State::Running;
+        self.lifecycle = Lifecycle::Running {
+            writer,
+            pid,
+            handle: spawn_watcher(
+                self.id,
+                pty_reader,
+                child,
+                self.event_tx.clone(),
+                self.pause_tx.subscribe(),
+            ),
+        };
         self.last_start_time = Some(Instant::now());
-        self.watcher_handle = Some(spawn_watcher(
-            self.id,
-            pty_reader,
-            child,
-            self.event_tx.clone(),
-            self.pause_tx.subscribe(),
-        ));
         self.sync_paused();
 
         Ok(())
     }
 
     pub fn stop(&mut self) {
-        if self.state != State::Running {
+        if !matches!(self.lifecycle, Lifecycle::Running { .. }) {
             return;
         }
         let _ = self.pause_tx.send(false);
-        let pid = self.child_pid.take();
-        self.state = State::Stopping;
+
+        let Lifecycle::Running {
+            writer,
+            pid,
+            handle,
+        } = std::mem::replace(
+            &mut self.lifecycle,
+            Lifecycle::Stopping {
+                pending_restart: false,
+            },
+        )
+        else {
+            unreachable!();
+        };
 
         // SIGTERM the process group before dropping the PTY writer, so the
         // child doesn't see SIGHUP (from PTY close) before our SIGTERM.
@@ -137,35 +167,36 @@ impl Process {
             let raw = i32::try_from(pid).expect("pid overflow");
             let _ = signal::kill(Pid::from_raw(-raw), Signal::SIGTERM);
         }
-        self.pty_writer.take();
+        drop(writer);
 
         // Spawn a SIGKILL escalation timer. The watcher task sends
         // ProcessExited when the child exits regardless of signal.
-        if let Some(handle) = self.watcher_handle.take() {
-            let timeout = self.shutdown_timeout;
-            tokio::spawn(async move {
-                if tokio::time::timeout(timeout, handle).await.is_err()
-                    && let Some(pid) = pid
-                {
-                    let raw = i32::try_from(pid).expect("pid overflow");
-                    let _ = signal::kill(Pid::from_raw(-raw), Signal::SIGKILL);
-                }
-            });
-        }
+        let timeout = self.shutdown_timeout;
+        tokio::spawn(async move {
+            if tokio::time::timeout(timeout, handle).await.is_err()
+                && let Some(pid) = pid
+            {
+                let raw = i32::try_from(pid).expect("pid overflow");
+                let _ = signal::kill(Pid::from_raw(-raw), Signal::SIGKILL);
+            }
+        });
     }
 
     /// Returns true if the process needs to be started (was already stopped).
     pub fn restart(&mut self) -> bool {
-        if matches!(self.state, State::Stopped | State::Failed) {
-            return true;
+        match &self.lifecycle {
+            Lifecycle::Stopped | Lifecycle::Failed => return true,
+            Lifecycle::Running { .. } => self.stop(),
+            Lifecycle::Stopping { .. } => {}
         }
-        self.pending_restart = true;
-        self.stop();
+        if let Lifecycle::Stopping { pending_restart } = &mut self.lifecycle {
+            *pending_restart = true;
+        }
         false
     }
 
     pub async fn write(&mut self, data: &[u8]) -> miette::Result<()> {
-        if let Some(writer) = &mut self.pty_writer {
+        if let Lifecycle::Running { writer, .. } = &mut self.lifecycle {
             writer
                 .write_all(data)
                 .await
@@ -176,7 +207,7 @@ impl Process {
 
     pub fn resize(&mut self, rows: u16, cols: u16) {
         self.terminal.resize(rows, cols);
-        if let Some(writer) = &self.pty_writer {
+        if let Lifecycle::Running { writer, .. } = &self.lifecycle {
             let _ = writer.resize(Size::new(rows, cols));
         }
     }
@@ -187,24 +218,22 @@ impl Process {
 
     /// Returns true if the process should be restarted.
     pub fn handle_exit(&mut self, status: ProcessStatus) -> bool {
-        if matches!(self.state, State::Stopped | State::Failed) {
-            return false;
-        }
-        let was_stopping = self.state == State::Stopping;
-        self.pty_writer.take();
-        self.child_pid.take();
-        self.watcher_handle.take();
-        self.state = if was_stopping {
-            State::Stopped
+        let (was_stopping, pending_restart) = match &self.lifecycle {
+            Lifecycle::Stopped | Lifecycle::Failed => return false,
+            Lifecycle::Running { .. } => (false, false),
+            Lifecycle::Stopping { pending_restart } => (true, *pending_restart),
+        };
+
+        self.lifecycle = if was_stopping {
+            Lifecycle::Stopped
         } else {
             match status {
-                ProcessStatus::Success => State::Stopped,
-                ProcessStatus::Failed(_) | ProcessStatus::Signal => State::Failed,
+                ProcessStatus::Success => Lifecycle::Stopped,
+                ProcessStatus::Failed(_) | ProcessStatus::Signal => Lifecycle::Failed,
             }
         };
 
-        if self.pending_restart {
-            self.pending_restart = false;
+        if pending_restart {
             return true;
         }
         let too_fast = self
@@ -234,11 +263,13 @@ impl Process {
 impl Drop for Process {
     fn drop(&mut self) {
         let _ = self.pause_tx.send(false);
-        if let Some(pid) = self.child_pid.take() {
+        // Extract Running resources so SIGTERM is sent before writer is dropped.
+        if let Lifecycle::Running { pid: Some(pid), .. } =
+            std::mem::replace(&mut self.lifecycle, Lifecycle::Stopped)
+        {
             let raw = i32::try_from(pid).expect("pid overflow");
             let _ = signal::kill(Pid::from_raw(-raw), Signal::SIGTERM);
         }
-        self.pty_writer.take();
     }
 }
 
@@ -273,9 +304,19 @@ mod tests {
         )
     }
 
-    /// Put process into Running state without spawning a real PTY.
+    /// Put process into Running state with real PTY resources.
     fn set_running(proc: &mut Process) {
-        proc.state = State::Running;
+        let (pty, _pts) = pty_process::open().unwrap();
+        let (_reader, writer) = pty.into_split();
+        proc.lifecycle = Lifecycle::Running {
+            writer,
+            pid: None,
+            handle: tokio::spawn(std::future::pending::<()>()),
+        };
+    }
+
+    fn set_stopping(proc: &mut Process, pending_restart: bool) {
+        proc.lifecycle = Lifecycle::Stopping { pending_restart };
     }
 
     #[test]
@@ -286,13 +327,18 @@ mod tests {
         assert_eq!(proc.state(), State::Stopped);
     }
 
-    #[test]
-    fn restart_on_running_transitions_to_stopping() {
+    #[tokio::test]
+    async fn restart_on_running_transitions_to_stopping() {
         let mut proc = test_process(true);
         set_running(&mut proc);
         assert!(!proc.restart());
         assert_eq!(proc.state(), State::Stopping);
-        assert!(proc.pending_restart);
+        assert!(matches!(
+            proc.lifecycle,
+            Lifecycle::Stopping {
+                pending_restart: true
+            }
+        ));
     }
 
     #[test]
@@ -306,37 +352,34 @@ mod tests {
     #[test]
     fn handle_exit_with_pending_restart_returns_true() {
         let mut proc = test_process(true);
-        set_running(&mut proc);
-        proc.pending_restart = true;
-        proc.state = State::Stopping;
+        set_stopping(&mut proc, true);
         assert!(proc.handle_exit(ProcessStatus::Success));
         assert_eq!(proc.state(), State::Stopped);
-        assert!(!proc.pending_restart);
     }
 
-    #[test]
-    fn handle_exit_with_autorestart_on_success() {
+    #[tokio::test]
+    async fn handle_exit_with_autorestart_on_success() {
         let mut proc = test_process(true);
         set_running(&mut proc);
         assert!(proc.handle_exit(ProcessStatus::Success));
     }
 
-    #[test]
-    fn handle_exit_with_autorestart_on_failure() {
+    #[tokio::test]
+    async fn handle_exit_with_autorestart_on_failure() {
         let mut proc = test_process(true);
         set_running(&mut proc);
         assert!(proc.handle_exit(ProcessStatus::Failed(1)));
     }
 
-    #[test]
-    fn handle_exit_with_autorestart_on_signal_returns_false() {
+    #[tokio::test]
+    async fn handle_exit_with_autorestart_on_signal_returns_false() {
         let mut proc = test_process(true);
         set_running(&mut proc);
         assert!(!proc.handle_exit(ProcessStatus::Signal));
     }
 
-    #[test]
-    fn handle_exit_after_explicit_stop_returns_false() {
+    #[tokio::test]
+    async fn handle_exit_after_explicit_stop_returns_false() {
         let mut proc = test_process(true);
         set_running(&mut proc);
         proc.stop();
@@ -344,8 +387,8 @@ mod tests {
         assert!(!proc.handle_exit(ProcessStatus::Success));
     }
 
-    #[test]
-    fn handle_exit_without_autorestart() {
+    #[tokio::test]
+    async fn handle_exit_without_autorestart() {
         let mut proc = test_process(false);
         set_running(&mut proc);
         assert!(!proc.handle_exit(ProcessStatus::Success));
@@ -357,8 +400,8 @@ mod tests {
         assert!(!proc.handle_exit(ProcessStatus::Success));
     }
 
-    #[test]
-    fn crash_loop_suppresses_autorestart() {
+    #[tokio::test]
+    async fn crash_loop_suppresses_autorestart() {
         let mut proc = test_process(true);
         set_running(&mut proc);
         proc.last_start_time = Some(Instant::now());
@@ -368,23 +411,21 @@ mod tests {
     #[test]
     fn pending_restart_bypasses_crash_loop_check() {
         let mut proc = test_process(true);
-        set_running(&mut proc);
         proc.last_start_time = Some(Instant::now());
-        proc.pending_restart = true;
-        proc.state = State::Stopping;
+        set_stopping(&mut proc, true);
         assert!(proc.handle_exit(ProcessStatus::Success));
     }
 
-    #[test]
-    fn handle_exit_sets_failed_on_nonzero_exit() {
+    #[tokio::test]
+    async fn handle_exit_sets_failed_on_nonzero_exit() {
         let mut proc = test_process(false);
         set_running(&mut proc);
         proc.handle_exit(ProcessStatus::Failed(1));
         assert_eq!(proc.state(), State::Failed);
     }
 
-    #[test]
-    fn handle_exit_sets_failed_on_signal() {
+    #[tokio::test]
+    async fn handle_exit_sets_failed_on_signal() {
         let mut proc = test_process(false);
         set_running(&mut proc);
         proc.handle_exit(ProcessStatus::Signal);
@@ -394,8 +435,7 @@ mod tests {
     #[test]
     fn handle_exit_sets_stopped_after_explicit_stop() {
         let mut proc = test_process(false);
-        set_running(&mut proc);
-        proc.state = State::Stopping;
+        set_stopping(&mut proc, false);
         proc.handle_exit(ProcessStatus::Failed(1));
         assert_eq!(proc.state(), State::Stopped);
     }
@@ -403,7 +443,7 @@ mod tests {
     #[test]
     fn restart_on_failed_returns_needs_start() {
         let mut proc = test_process(true);
-        proc.state = State::Failed;
+        proc.lifecycle = Lifecycle::Failed;
         assert!(proc.restart());
     }
 }
