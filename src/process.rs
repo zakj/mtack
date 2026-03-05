@@ -26,13 +26,18 @@ enum Lifecycle {
     Stopped,
     Running {
         writer: pty_process::OwnedWritePty,
-        pid: Option<u32>,
+        pid: Option<Pid>,
         handle: JoinHandle<()>,
     },
     Stopping {
         pending_restart: bool,
     },
     Failed,
+}
+
+/// Send a signal to the process group led by `pid`.
+fn signal_process_group(pid: Pid, sig: Signal) {
+    let _ = signal::kill(Pid::from_raw(-pid.as_raw()), sig);
 }
 
 impl Lifecycle {
@@ -121,7 +126,10 @@ impl Process {
         }
 
         let child = cmd.spawn(pts).map_err(|e| miette::miette!("{e}"))?;
-        let pid = child.id();
+        let pid = child.id().map(|id| {
+            let raw = i32::try_from(id).expect("pid overflow");
+            Pid::from_raw(raw)
+        });
         let (pty_reader, writer) = pty.into_split();
 
         self.lifecycle = Lifecycle::Running {
@@ -164,8 +172,7 @@ impl Process {
         // SIGTERM the process group before dropping the PTY writer, so the
         // child doesn't see SIGHUP (from PTY close) before our SIGTERM.
         if let Some(pid) = pid {
-            let raw = i32::try_from(pid).expect("pid overflow");
-            let _ = signal::kill(Pid::from_raw(-raw), Signal::SIGTERM);
+            signal_process_group(pid, Signal::SIGTERM);
         }
         drop(writer);
 
@@ -176,8 +183,7 @@ impl Process {
             if tokio::time::timeout(timeout, handle).await.is_err()
                 && let Some(pid) = pid
             {
-                let raw = i32::try_from(pid).expect("pid overflow");
-                let _ = signal::kill(Pid::from_raw(-raw), Signal::SIGKILL);
+                signal_process_group(pid, Signal::SIGKILL);
             }
         });
     }
@@ -267,8 +273,7 @@ impl Drop for Process {
         if let Lifecycle::Running { pid: Some(pid), .. } =
             std::mem::replace(&mut self.lifecycle, Lifecycle::Stopped)
         {
-            let raw = i32::try_from(pid).expect("pid overflow");
-            let _ = signal::kill(Pid::from_raw(-raw), Signal::SIGTERM);
+            signal_process_group(pid, Signal::SIGTERM);
         }
     }
 }
