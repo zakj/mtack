@@ -6,6 +6,7 @@ mod viewport;
 
 // Top-level layout composition.
 
+use crate::app::SearchState;
 use crate::input::Mode;
 use crate::process::Process;
 use crate::terminal::VisibleMatchSpan;
@@ -20,11 +21,7 @@ pub struct RenderContext<'a> {
     pub selected: usize,
     pub mode: Mode,
     pub show_help: bool,
-    pub search_query: &'a str,
-    pub last_search_query: &'a str,
-    pub search_total: usize,
-    pub search_current: Option<usize>,
-    pub search_no_matches: bool,
+    pub search: &'a SearchState,
     pub remaining_count: usize,
     pub visible_matches: &'a [VisibleMatchSpan],
 }

@@ -12,6 +12,34 @@ use ratatui::DefaultTerminal;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
+#[derive(Default)]
+pub struct SearchState {
+    pub query: String,
+    pub last_query: String,
+    matches: Vec<MatchSpan>,
+    current: Option<usize>,
+}
+
+impl SearchState {
+    pub fn no_matches(&self) -> bool {
+        !self.query.is_empty() && self.matches.is_empty()
+    }
+
+    pub fn current(&self) -> Option<usize> {
+        self.current
+    }
+
+    pub fn match_count(&self) -> usize {
+        self.matches.len()
+    }
+
+    fn clear(&mut self) {
+        self.query.clear();
+        self.matches.clear();
+        self.current = None;
+    }
+}
+
 const EVENT_CHANNEL_SIZE: usize = 256;
 const MOUSE_SCROLL_LINES: usize = 3;
 const RENDER_INTERVAL_FOCUSED: Duration = Duration::from_millis(16);
@@ -27,11 +55,7 @@ pub struct App {
     event_rx: mpsc::Receiver<Event>,
     should_quit: bool,
     dirty: bool,
-    search_query: String,
-    last_search_query: String,
-    search_matches: Vec<MatchSpan>,
-    search_current: Option<usize>,
-    search_no_matches: bool,
+    search: SearchState,
     focused: bool,
 }
 
@@ -67,11 +91,7 @@ impl App {
             event_rx,
             should_quit: false,
             dirty: true,
-            search_query: String::new(),
-            last_search_query: String::new(),
-            search_matches: Vec::new(),
-            search_current: None,
-            search_no_matches: false,
+            search: SearchState::default(),
             focused: true,
         }
     }
@@ -102,10 +122,10 @@ impl App {
             tokio::select! {
                 _ = render_interval.tick(), if self.dirty => {
                     let visible_matches =
-                        if !self.search_query.is_empty() && self.mode != Mode::Search {
+                        if !self.search.query.is_empty() && self.mode != Mode::Search {
                             self.processes[self.selected]
                                 .terminal_mut()
-                                .find_visible_matches(&self.search_query)
+                                .find_visible_matches(&self.search.query)
                                 .to_vec()
                         } else {
                             Vec::new()
@@ -118,11 +138,7 @@ impl App {
                                 selected: self.selected,
                                 mode: self.mode,
                                 show_help: self.show_help,
-                                search_query: &self.search_query,
-                                last_search_query: &self.last_search_query,
-                                search_total: self.search_matches.len(),
-                                search_current: self.search_current,
-                                search_no_matches: self.search_no_matches,
+                                search: &self.search,
                                 remaining_count: self
                                     .processes
                                     .iter()
@@ -216,7 +232,7 @@ impl App {
                         mouse.column,
                     ) {
                         self.selected = idx;
-                        self.clear_search();
+                        self.search.clear();
                         if self.mode == Mode::Focused {
                             self.mode = Mode::Normal;
                         }
@@ -241,20 +257,20 @@ impl App {
             Action::SelectTab(idx) => {
                 if idx < self.processes.len() {
                     self.selected = idx;
-                    self.clear_search();
+                    self.search.clear();
                 }
             }
             Action::NextTab => {
                 if !self.processes.is_empty() {
                     self.selected = (self.selected + 1) % self.processes.len();
-                    self.clear_search();
+                    self.search.clear();
                 }
             }
             Action::PrevTab => {
                 if !self.processes.is_empty() {
                     self.selected =
                         (self.selected + self.processes.len() - 1) % self.processes.len();
-                    self.clear_search();
+                    self.search.clear();
                 }
             }
             Action::Focus => {
@@ -290,25 +306,23 @@ impl App {
             }
             Action::EnterSearch => {
                 self.mode = Mode::Search;
-                self.search_query.clear();
-                self.search_matches.clear();
-                self.search_current = None;
+                self.search.clear();
             }
             Action::SearchInput(c) => {
-                self.search_query.push(c);
+                self.search.query.push(c);
             }
             Action::SearchBackspace => {
-                self.search_query.pop();
+                self.search.query.pop();
             }
             Action::SearchFillPlaceholder => {
-                if self.search_query.is_empty() && !self.last_search_query.is_empty() {
-                    self.search_query.clone_from(&self.last_search_query);
+                if self.search.query.is_empty() && !self.search.last_query.is_empty() {
+                    self.search.query.clone_from(&self.search.last_query);
                 }
             }
             Action::SearchAccept => {
                 // Enter with empty query and a placeholder: use the placeholder.
-                if self.search_query.is_empty() && !self.last_search_query.is_empty() {
-                    self.search_query.clone_from(&self.last_search_query);
+                if self.search.query.is_empty() && !self.search.last_query.is_empty() {
+                    self.search.query.clone_from(&self.search.last_query);
                 }
                 if !self.processes[self.selected]
                     .terminal()
@@ -316,10 +330,9 @@ impl App {
                 {
                     let (matches, total_rows) = self.processes[self.selected]
                         .terminal_mut()
-                        .find_all_matches(&self.search_query);
-                    self.search_matches = matches.to_vec();
-                    self.search_no_matches = self.search_matches.is_empty();
-                    if !self.search_matches.is_empty() {
+                        .find_all_matches(&self.search.query);
+                    self.search.matches = matches.to_vec();
+                    if !self.search.matches.is_empty() {
                         // Jump to last match at or before current viewport.
                         let scrollback = self.processes[self.selected].terminal().scrollback();
                         let (rows, _) = self.processes[self.selected].terminal().size();
@@ -327,23 +340,24 @@ impl App {
                         let visible_bottom = visible_top + rows as usize;
 
                         let idx = self
-                            .search_matches
+                            .search
+                            .matches
                             .iter()
                             .rposition(|m| m.row <= visible_bottom)
-                            .unwrap_or(self.search_matches.len() - 1);
-                        self.search_current = Some(idx);
+                            .unwrap_or(self.search.matches.len() - 1);
+                        self.search.current = Some(idx);
                         self.processes[self.selected]
                             .terminal_mut()
-                            .scroll_to_row(self.search_matches[idx].row);
+                            .scroll_to_row(self.search.matches[idx].row);
                     }
                 }
-                if !self.search_query.is_empty() {
-                    self.last_search_query.clone_from(&self.search_query);
+                if !self.search.query.is_empty() {
+                    self.search.last_query.clone_from(&self.search.query);
                 }
                 self.mode = Mode::Normal;
             }
             Action::SearchCancel => {
-                self.clear_search();
+                self.search.clear();
                 self.processes[self.selected]
                     .terminal_mut()
                     .scroll_to_bottom();
@@ -411,19 +425,12 @@ impl App {
         Ok(())
     }
 
-    fn clear_search(&mut self) {
-        self.search_query.clear();
-        self.search_matches.clear();
-        self.search_current = None;
-        self.search_no_matches = false;
-    }
-
     // Navigate to the next (or previous) match relative to the current viewport
     // center, reusing matches from the initial search accept. Positions may drift
     // slightly if streaming output shifts the scrollback buffer; the user can
     // re-search to refresh.
     fn search_navigate(&mut self, forward: bool) {
-        if self.search_matches.is_empty()
+        if self.search.matches.is_empty()
             || self.processes[self.selected]
                 .terminal()
                 .is_alternate_screen()
@@ -438,19 +445,15 @@ impl App {
 
         // Don't wrap around — stop at the first/last match.
         let idx = if forward {
-            self.search_matches
-                .iter()
-                .position(|m| m.row > visible_center)
+            self.search.matches.iter().position(|m| m.row > visible_center)
         } else {
-            self.search_matches
-                .iter()
-                .rposition(|m| m.row < visible_center)
+            self.search.matches.iter().rposition(|m| m.row < visible_center)
         };
         let Some(idx) = idx else { return };
-        self.search_current = Some(idx);
+        self.search.current = Some(idx);
         self.processes[self.selected]
             .terminal_mut()
-            .scroll_to_row(self.search_matches[idx].row);
+            .scroll_to_row(self.search.matches[idx].row);
     }
 
     fn resize_processes(&mut self) {

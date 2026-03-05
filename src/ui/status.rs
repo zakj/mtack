@@ -48,9 +48,10 @@ impl Widget for StatusBar<'_> {
                 push_hint(&mut spans, "any", "cancel");
             }
             Mode::Search => {
+                let search = self.ctx.search;
                 spans.push(Span::styled("/", Style::default().fg(Color::Yellow)));
-                if self.ctx.search_query.is_empty() && !self.ctx.last_search_query.is_empty() {
-                    let placeholder = self.ctx.last_search_query;
+                if search.query.is_empty() && !search.last_query.is_empty() {
+                    let placeholder = &search.last_query;
                     let first = &placeholder[..placeholder.ceil_char_boundary(1)];
                     let rest = &placeholder[first.len()..];
                     spans.push(Span::styled(
@@ -65,22 +66,23 @@ impl Widget for StatusBar<'_> {
                     }
                 } else {
                     spans.push(Span::styled(
-                        self.ctx.search_query.to_string(),
+                        search.query.to_string(),
                         Style::default().fg(Color::Yellow),
                     ));
                     spans.push(Span::styled("▎", Style::default().fg(Color::Yellow)));
                 }
             }
             Mode::Normal => {
-                let searching = !self.ctx.search_query.is_empty();
+                let search = self.ctx.search;
+                let searching = !search.query.is_empty();
                 // Badges/search state are always shown (small, high-priority).
-                if let Some(idx) = self.ctx.search_current {
+                if let Some(idx) = search.current() {
                     spans.push(Span::styled(
-                        format!(" {}/{} ", idx + 1, self.ctx.search_total),
+                        format!(" {}/{} ", idx + 1, search.match_count()),
                         Style::default().fg(Color::Black).bg(Color::Yellow),
                     ));
                     spans.push(Span::raw(" "));
-                } else if self.ctx.search_no_matches {
+                } else if search.no_matches() {
                     spans.push(Span::styled(
                         " 0/0 ",
                         Style::default().fg(Color::Black).bg(Color::Red),
