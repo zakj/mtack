@@ -11,6 +11,11 @@ use ratatui::DefaultTerminal;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
+enum SearchDirection {
+    Forward,
+    Backward,
+}
+
 #[derive(Default)]
 pub struct SearchState {
     pub query: String,
@@ -363,10 +368,10 @@ impl App {
                 self.mode = Mode::Normal;
             }
             Action::SearchNext => {
-                self.search_navigate(true);
+                self.search_navigate(SearchDirection::Forward);
             }
             Action::SearchPrev => {
-                self.search_navigate(false);
+                self.search_navigate(SearchDirection::Backward);
             }
             Action::ToggleHelp => {
                 self.show_help = !self.show_help;
@@ -428,7 +433,7 @@ impl App {
     // center, reusing matches from the initial search accept. Positions may drift
     // slightly if streaming output shifts the scrollback buffer; the user can
     // re-search to refresh.
-    fn search_navigate(&mut self, forward: bool) {
+    fn search_navigate(&mut self, direction: SearchDirection) {
         if self.search.matches.is_empty()
             || self.processes[self.selected]
                 .terminal()
@@ -443,10 +448,13 @@ impl App {
         let visible_center = total_rows.saturating_sub(scrollback + rows as usize / 2);
 
         // Don't wrap around — stop at the first/last match.
-        let idx = if forward {
-            self.search.matches.iter().position(|m| m.row > visible_center)
-        } else {
-            self.search.matches.iter().rposition(|m| m.row < visible_center)
+        let idx = match direction {
+            SearchDirection::Forward => {
+                self.search.matches.iter().position(|m| m.row > visible_center)
+            }
+            SearchDirection::Backward => {
+                self.search.matches.iter().rposition(|m| m.row < visible_center)
+            }
         };
         let Some(idx) = idx else { return };
         self.search.current = Some(idx);
