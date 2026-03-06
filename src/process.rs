@@ -22,6 +22,11 @@ pub enum State {
 
 const CRASH_LOOP_THRESHOLD: Duration = Duration::from_secs(1);
 
+pub enum ShouldRestart {
+    Yes,
+    No,
+}
+
 enum Lifecycle {
     Stopped,
     Running {
@@ -188,17 +193,16 @@ impl Process {
         });
     }
 
-    /// Returns true if the process needs to be started (was already stopped).
-    pub fn restart(&mut self) -> bool {
+    pub fn restart(&mut self) -> ShouldRestart {
         match &self.lifecycle {
-            Lifecycle::Stopped | Lifecycle::Failed => return true,
+            Lifecycle::Stopped | Lifecycle::Failed => return ShouldRestart::Yes,
             Lifecycle::Running { .. } => self.stop(),
             Lifecycle::Stopping { .. } => {}
         }
         if let Lifecycle::Stopping { pending_restart } = &mut self.lifecycle {
             *pending_restart = true;
         }
-        false
+        ShouldRestart::No
     }
 
     pub async fn write(&mut self, data: &[u8]) -> miette::Result<()> {
@@ -222,10 +226,9 @@ impl Process {
         self.terminal.process(data);
     }
 
-    /// Returns true if the process should be restarted.
-    pub fn handle_exit(&mut self, status: ProcessStatus) -> bool {
+    pub fn handle_exit(&mut self, status: ProcessStatus) -> ShouldRestart {
         let (was_stopping, pending_restart) = match &self.lifecycle {
-            Lifecycle::Stopped | Lifecycle::Failed => return false,
+            Lifecycle::Stopped | Lifecycle::Failed => return ShouldRestart::No,
             Lifecycle::Running { .. } => (false, false),
             Lifecycle::Stopping { pending_restart } => (true, *pending_restart),
         };
@@ -240,16 +243,21 @@ impl Process {
         };
 
         if pending_restart {
-            return true;
+            return ShouldRestart::Yes;
         }
         let too_fast = self
             .last_start_time
             .is_some_and(|t| t.elapsed() < CRASH_LOOP_THRESHOLD);
 
-        !was_stopping
+        if !was_stopping
             && self.config.autorestart
             && !too_fast
             && matches!(status, ProcessStatus::Success | ProcessStatus::Failed(_))
+        {
+            ShouldRestart::Yes
+        } else {
+            ShouldRestart::No
+        }
     }
 
     pub fn autostart(&self) -> bool {
@@ -329,7 +337,7 @@ mod tests {
     fn restart_on_stopped_returns_needs_start() {
         let mut proc = test_process(true);
         assert_eq!(proc.state(), State::Stopped);
-        assert!(proc.restart());
+        assert!(matches!(proc.restart(), ShouldRestart::Yes));
         assert_eq!(proc.state(), State::Stopped);
     }
 
@@ -337,7 +345,7 @@ mod tests {
     async fn restart_on_running_transitions_to_stopping() {
         let mut proc = test_process(true);
         set_running(&mut proc);
-        assert!(!proc.restart());
+        assert!(matches!(proc.restart(), ShouldRestart::No));
         assert_eq!(proc.state(), State::Stopping);
         assert!(matches!(
             proc.lifecycle,
@@ -356,10 +364,10 @@ mod tests {
     }
 
     #[test]
-    fn handle_exit_with_pending_restart_returns_true() {
+    fn handle_exit_with_pending_restart() {
         let mut proc = test_process(true);
         set_stopping(&mut proc, true);
-        assert!(proc.handle_exit(ProcessStatus::Success));
+        assert!(matches!(proc.handle_exit(ProcessStatus::Success), ShouldRestart::Yes));
         assert_eq!(proc.state(), State::Stopped);
     }
 
@@ -367,43 +375,43 @@ mod tests {
     async fn handle_exit_with_autorestart_on_success() {
         let mut proc = test_process(true);
         set_running(&mut proc);
-        assert!(proc.handle_exit(ProcessStatus::Success));
+        assert!(matches!(proc.handle_exit(ProcessStatus::Success), ShouldRestart::Yes));
     }
 
     #[tokio::test]
     async fn handle_exit_with_autorestart_on_failure() {
         let mut proc = test_process(true);
         set_running(&mut proc);
-        assert!(proc.handle_exit(ProcessStatus::Failed(1)));
+        assert!(matches!(proc.handle_exit(ProcessStatus::Failed(1)), ShouldRestart::Yes));
     }
 
     #[tokio::test]
-    async fn handle_exit_with_autorestart_on_signal_returns_false() {
+    async fn handle_exit_with_autorestart_on_signal() {
         let mut proc = test_process(true);
         set_running(&mut proc);
-        assert!(!proc.handle_exit(ProcessStatus::Signal));
+        assert!(matches!(proc.handle_exit(ProcessStatus::Signal), ShouldRestart::No));
     }
 
     #[tokio::test]
-    async fn handle_exit_after_explicit_stop_returns_false() {
+    async fn handle_exit_after_explicit_stop() {
         let mut proc = test_process(true);
         set_running(&mut proc);
         proc.stop();
         assert_eq!(proc.state(), State::Stopping);
-        assert!(!proc.handle_exit(ProcessStatus::Success));
+        assert!(matches!(proc.handle_exit(ProcessStatus::Success), ShouldRestart::No));
     }
 
     #[tokio::test]
     async fn handle_exit_without_autorestart() {
         let mut proc = test_process(false);
         set_running(&mut proc);
-        assert!(!proc.handle_exit(ProcessStatus::Success));
+        assert!(matches!(proc.handle_exit(ProcessStatus::Success), ShouldRestart::No));
     }
 
     #[test]
     fn handle_exit_on_already_stopped() {
         let mut proc = test_process(true);
-        assert!(!proc.handle_exit(ProcessStatus::Success));
+        assert!(matches!(proc.handle_exit(ProcessStatus::Success), ShouldRestart::No));
     }
 
     #[tokio::test]
@@ -411,7 +419,7 @@ mod tests {
         let mut proc = test_process(true);
         set_running(&mut proc);
         proc.last_start_time = Some(Instant::now());
-        assert!(!proc.handle_exit(ProcessStatus::Success));
+        assert!(matches!(proc.handle_exit(ProcessStatus::Success), ShouldRestart::No));
     }
 
     #[test]
@@ -419,7 +427,7 @@ mod tests {
         let mut proc = test_process(true);
         proc.last_start_time = Some(Instant::now());
         set_stopping(&mut proc, true);
-        assert!(proc.handle_exit(ProcessStatus::Success));
+        assert!(matches!(proc.handle_exit(ProcessStatus::Success), ShouldRestart::Yes));
     }
 
     #[tokio::test]
@@ -450,7 +458,7 @@ mod tests {
     fn restart_on_failed_returns_needs_start() {
         let mut proc = test_process(true);
         proc.lifecycle = Lifecycle::Failed;
-        assert!(proc.restart());
+        assert!(matches!(proc.restart(), ShouldRestart::Yes));
     }
 }
 

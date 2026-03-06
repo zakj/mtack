@@ -3,8 +3,7 @@
 use crate::config::Config;
 use crate::event::Event;
 use crate::input::{self, Action, Mode, ScrollAmount};
-use crate::process::Process;
-use crate::process::State;
+use crate::process::{Process, ShouldRestart, State};
 use crate::terminal::MatchSpan;
 use crossterm::event::{Event as CtEvent, EventStream, MouseButton, MouseEventKind};
 use futures_util::StreamExt;
@@ -288,7 +287,7 @@ impl App {
                 self.processes[self.selected].stop();
             }
             Action::RestartProcess => {
-                if self.processes[self.selected].restart() {
+                if matches!(self.processes[self.selected].restart(), ShouldRestart::Yes) {
                     self.processes[self.selected].start()?;
                 }
             }
@@ -416,7 +415,7 @@ impl App {
             }
             Event::ProcessExited { id, status } => {
                 if let Some(proc) = self.processes.get_mut(id)
-                    && proc.handle_exit(status)
+                    && matches!(proc.handle_exit(status), ShouldRestart::Yes)
                 {
                     proc.start()?;
                 }
