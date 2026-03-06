@@ -87,6 +87,10 @@ impl Process {
             return Ok(());
         }
 
+        if self.last_start_time.is_some() {
+            self.terminal.inject_banner("restarted");
+        }
+
         let (pty, pts) = pty_process::open().map_err(|e| miette::miette!("{e}"))?;
         let (rows, cols) = self.terminal.size();
         pty.resize(Size::new(rows, cols))

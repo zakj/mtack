@@ -66,6 +66,16 @@ impl Terminal {
         self.parser.screen()
     }
 
+    pub fn inject_banner(&mut self, label: &str) {
+        let (_, cols) = self.parser.screen().size();
+        let prefix = format!("── {label} ");
+        let fill_len = (cols as usize).saturating_sub(prefix.chars().count());
+        let fill = "─".repeat(fill_len);
+        let banner = format!("\r\n\x1b[90m{prefix}{fill}\x1b[0m\r\n");
+        self.parser.process(banner.as_bytes());
+        self.search_dirty = true;
+    }
+
     pub fn resize(&mut self, rows: u16, cols: u16) {
         self.parser.screen_mut().set_size(rows.max(1), cols.max(1));
         self.search_dirty = true;
