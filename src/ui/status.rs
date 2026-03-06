@@ -1,12 +1,12 @@
 // Status bar with keybinding hints.
 
 use super::RenderContext;
-use super::hints::{self, ShowWhen};
+use super::hints;
 use crate::input::Mode;
 use crate::process::State;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 
@@ -36,6 +36,7 @@ impl Widget for StatusBar<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let max_width = area.width as usize;
         let mut spans = Vec::new();
+        let mut right_spans: Vec<Span<'static>> = Vec::new();
 
         match self.ctx.mode {
             Mode::ConfirmQuit => {
@@ -94,19 +95,13 @@ impl Widget for StatusBar<'_> {
                 let mut width: usize = spans.iter().map(|s| s.width()).sum();
                 let full = (searching || self.scrolled_back)
                     && !try_push_hint(&mut spans, &mut width, max_width, "esc", "clear");
-                let running = self.process_state == State::Running;
                 if !full {
                     for hint in hints::normal_hints() {
-                        let visible = match hint.bar_when {
-                            ShowWhen::Always => true,
-                            ShowWhen::WhenRunning => running,
-                            ShowWhen::WhenStopped => {
-                                !running && self.process_state != State::Stopping
-                            }
-                            ShowWhen::WhenScrolled => self.scrolled_back,
-                        };
-                        if visible
-                            && let Some(bar_keys) = hint.bar
+                        if hint.right {
+                            continue;
+                        }
+                        if let Some((bar_keys, show_when)) = hint.bar
+                            && show_when.visible(self.process_state, self.scrolled_back)
                             && !try_push_hint(
                                 &mut spans, &mut width, max_width, bar_keys, hint.desc,
                             )
@@ -115,12 +110,20 @@ impl Widget for StatusBar<'_> {
                         }
                     }
                 }
+                for hint in hints::normal_hints() {
+                    if hint.right
+                        && let Some((bar_keys, show_when)) = hint.bar
+                        && show_when.visible(self.process_state, self.scrolled_back)
+                    {
+                        right_spans.extend(build_hint(true, bar_keys, hint.desc));
+                    }
+                }
             }
             Mode::Focused => {
                 push_badge(&mut spans, "FOCUS", Color::Green);
                 let mut width: usize = spans.iter().map(|s| s.width()).sum();
                 for hint in hints::focused_hints() {
-                    if let Some(bar_keys) = hint.bar
+                    if let Some((bar_keys, _)) = hint.bar
                         && !try_push_hint(&mut spans, &mut width, max_width, bar_keys, hint.desc)
                     {
                         break;
@@ -134,6 +137,29 @@ impl Widget for StatusBar<'_> {
                         self.ctx.remaining_count
                     ),
                     Style::default().fg(Color::Yellow),
+                ));
+            }
+        }
+
+        let used: usize = spans.iter().map(|s| s.width()).sum();
+        let right_width: usize = right_spans.iter().map(|s| s.width()).sum();
+        let gap = if used > 0 { 2 } else { 0 };
+        let available = max_width.saturating_sub(used + gap);
+        if available > 0 {
+            if gap > 0 {
+                spans.push(Span::raw("  "));
+            }
+            if right_width > 0 && available > right_width {
+                let fill = available - right_width;
+                spans.push(Span::styled(
+                    "─".repeat(fill),
+                    Style::default().add_modifier(Modifier::DIM),
+                ));
+                spans.extend(right_spans);
+            } else {
+                spans.push(Span::styled(
+                    "─".repeat(available),
+                    Style::default().add_modifier(Modifier::DIM),
                 ));
             }
         }

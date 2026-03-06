@@ -1,5 +1,6 @@
 // Single source of truth for keybinding hints (status bar + help panel).
 
+use crate::process::State;
 use ratatui::style::{Color, Style};
 use ratatui::text::Span;
 
@@ -36,136 +37,77 @@ pub enum ShowWhen {
     WhenScrolled,
 }
 
+impl ShowWhen {
+    pub fn visible(self, process_state: State, scrolled_back: bool) -> bool {
+        match self {
+            Self::Always => true,
+            Self::WhenRunning => process_state == State::Running,
+            Self::WhenStopped => matches!(process_state, State::Stopped | State::Failed),
+            Self::WhenScrolled => scrolled_back,
+        }
+    }
+}
+
 pub struct KeyHint {
     pub keys: &'static str,
     pub desc: &'static str,
     pub category: Category,
-    pub bar: Option<&'static str>,
-    pub bar_when: ShowWhen,
+    pub bar: Option<(&'static str, ShowWhen)>,
+    pub right: bool,
 }
 
 impl KeyHint {
+    const fn new(keys: &'static str, desc: &'static str, category: Category) -> Self {
+        Self {
+            keys,
+            desc,
+            category,
+            bar: None,
+            right: false,
+        }
+    }
+
+    const fn bar(mut self, keys: &'static str, when: ShowWhen) -> Self {
+        self.bar = Some((keys, when));
+        self
+    }
+
+    const fn right(mut self) -> Self {
+        self.right = true;
+        self
+    }
+
     pub fn help_width(&self) -> u16 {
         (2 + self.keys.chars().count() + 1 + self.desc.chars().count()) as u16
     }
 }
 
 pub fn normal_hints() -> &'static [KeyHint] {
-    &[
-        KeyHint {
-            keys: "h/l ←/→ tab",
-            desc: "tabs",
-            category: Category::Navigation,
-            bar: Some("h/l"),
-            bar_when: ShowWhen::Always,
-        },
-        KeyHint {
-            keys: "1-9",
-            desc: "go to tab",
-            category: Category::Navigation,
-            bar: None,
-            bar_when: ShowWhen::Always,
-        },
-        KeyHint {
-            keys: "j/k ↑/↓",
-            desc: "scroll",
-            category: Category::Navigation,
-            bar: Some("j/k"),
-            bar_when: ShowWhen::WhenScrolled,
-        },
-        KeyHint {
-            keys: "ctrl-f/b",
-            desc: "scroll pages",
-            category: Category::Navigation,
-            bar: None,
-            bar_when: ShowWhen::Always,
-        },
-        KeyHint {
-            keys: "pgdn/pgup",
-            desc: "scroll pages",
-            category: Category::Navigation,
-            bar: None,
-            bar_when: ShowWhen::Always,
-        },
-        KeyHint {
-            keys: "home/end",
-            desc: "top/bottom",
-            category: Category::Navigation,
-            bar: None,
-            bar_when: ShowWhen::Always,
-        },
-        KeyHint {
-            keys: "i/enter",
-            desc: "focus",
-            category: Category::Actions,
-            bar: Some("i"),
-            bar_when: ShowWhen::WhenRunning,
-        },
-        KeyHint {
-            keys: "s",
-            desc: "start",
-            category: Category::Actions,
-            bar: Some("s"),
-            bar_when: ShowWhen::WhenStopped,
-        },
-        KeyHint {
-            keys: "x",
-            desc: "stop",
-            category: Category::Actions,
-            bar: Some("x"),
-            bar_when: ShowWhen::WhenRunning,
-        },
-        KeyHint {
-            keys: "r",
-            desc: "restart",
-            category: Category::Actions,
-            bar: Some("r"),
-            bar_when: ShowWhen::WhenRunning,
-        },
-        KeyHint {
-            keys: "/",
-            desc: "search",
-            category: Category::Navigation,
-            bar: Some("/"),
-            bar_when: ShowWhen::Always,
-        },
-        KeyHint {
-            keys: "n/N",
-            desc: "next/prev match",
-            category: Category::Navigation,
-            bar: None,
-            bar_when: ShowWhen::Always,
-        },
-        KeyHint {
-            keys: "q",
-            desc: "quit",
-            category: Category::App,
-            bar: Some("q"),
-            bar_when: ShowWhen::Always,
-        },
-        KeyHint {
-            keys: "Q",
-            desc: "force quit",
-            category: Category::App,
-            bar: None,
-            bar_when: ShowWhen::Always,
-        },
-        KeyHint {
-            keys: "?",
-            desc: "help",
-            category: Category::App,
-            bar: Some("?"),
-            bar_when: ShowWhen::Always,
-        },
-    ]
+    use Category::*;
+    use ShowWhen::*;
+    const HINTS: &[KeyHint] = &[
+        KeyHint::new("h/l ←/→ tab", "tabs", Navigation).bar("h/l", Always),
+        KeyHint::new("1-9", "go to tab", Navigation),
+        KeyHint::new("j/k ↑/↓", "scroll", Navigation),
+        KeyHint::new("ctrl-f/b", "scroll pages", Navigation).bar("^f/^b", WhenScrolled),
+        KeyHint::new("pgdn/pgup", "scroll pages", Navigation),
+        KeyHint::new("home/end", "top/bottom", Navigation),
+        KeyHint::new("i/enter", "focus", Actions).bar("i", WhenRunning),
+        KeyHint::new("s", "start", Actions).bar("s", WhenStopped),
+        KeyHint::new("x", "stop", Actions).bar("x", WhenRunning),
+        KeyHint::new("r", "restart", Actions).bar("r", WhenRunning),
+        KeyHint::new("/", "search", Navigation).bar("/", Always),
+        KeyHint::new("n/N", "next/prev match", Navigation),
+        KeyHint::new("q", "quit", App).bar("q", Always).right(),
+        KeyHint::new("Q", "force quit", App),
+        KeyHint::new("?", "help", App).bar("?", Always).right(),
+    ];
+    HINTS
 }
 
 pub fn focused_hints() -> &'static [KeyHint] {
-    &[KeyHint {
-        keys: "esc",
-        desc: "unfocus",
-        category: Category::Actions,
-        bar: Some("esc"),
-        bar_when: ShowWhen::Always,
-    }]
+    use Category::*;
+    use ShowWhen::*;
+    const HINTS: &[KeyHint] = &[KeyHint::new("esc", "unfocus", Actions).bar("esc", Always)];
+    HINTS
 }
