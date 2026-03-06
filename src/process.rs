@@ -58,7 +58,6 @@ impl Lifecycle {
 
 pub struct Process {
     id: usize,
-    name: String,
     terminal: Terminal,
     lifecycle: Lifecycle,
     config: ProcConfig,
@@ -81,7 +80,6 @@ impl Process {
         let (pause_tx, _) = watch::channel(false);
         Self {
             id,
-            name: config.name.clone(),
             terminal: Terminal::new(rows, cols, scrollback),
             lifecycle: Lifecycle::Stopped,
             config,
@@ -93,7 +91,7 @@ impl Process {
     }
 
     pub fn name(&self) -> &str {
-        &self.name
+        &self.config.name
     }
 
     pub fn terminal(&self) -> &Terminal {
