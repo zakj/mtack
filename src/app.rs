@@ -449,12 +449,16 @@ impl App {
 
         // Don't wrap around — stop at the first/last match.
         let idx = match direction {
-            SearchDirection::Forward => {
-                self.search.matches.iter().position(|m| m.row > visible_center)
-            }
-            SearchDirection::Backward => {
-                self.search.matches.iter().rposition(|m| m.row < visible_center)
-            }
+            SearchDirection::Forward => self
+                .search
+                .matches
+                .iter()
+                .position(|m| m.row > visible_center),
+            SearchDirection::Backward => self
+                .search
+                .matches
+                .iter()
+                .rposition(|m| m.row < visible_center),
         };
         let Some(idx) = idx else { return };
         self.search.current = Some(idx);

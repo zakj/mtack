@@ -365,7 +365,10 @@ mod tests {
     fn handle_exit_with_pending_restart() {
         let mut proc = test_process(true);
         set_stopping(&mut proc, true);
-        assert!(matches!(proc.handle_exit(ProcessStatus::Success), ShouldRestart::Yes));
+        assert!(matches!(
+            proc.handle_exit(ProcessStatus::Success),
+            ShouldRestart::Yes
+        ));
         assert_eq!(proc.state(), State::Stopped);
     }
 
@@ -373,21 +376,30 @@ mod tests {
     async fn handle_exit_with_autorestart_on_success() {
         let mut proc = test_process(true);
         set_running(&mut proc);
-        assert!(matches!(proc.handle_exit(ProcessStatus::Success), ShouldRestart::Yes));
+        assert!(matches!(
+            proc.handle_exit(ProcessStatus::Success),
+            ShouldRestart::Yes
+        ));
     }
 
     #[tokio::test]
     async fn handle_exit_with_autorestart_on_failure() {
         let mut proc = test_process(true);
         set_running(&mut proc);
-        assert!(matches!(proc.handle_exit(ProcessStatus::Failed(1)), ShouldRestart::Yes));
+        assert!(matches!(
+            proc.handle_exit(ProcessStatus::Failed(1)),
+            ShouldRestart::Yes
+        ));
     }
 
     #[tokio::test]
     async fn handle_exit_with_autorestart_on_signal() {
         let mut proc = test_process(true);
         set_running(&mut proc);
-        assert!(matches!(proc.handle_exit(ProcessStatus::Signal), ShouldRestart::No));
+        assert!(matches!(
+            proc.handle_exit(ProcessStatus::Signal),
+            ShouldRestart::No
+        ));
     }
 
     #[tokio::test]
@@ -396,20 +408,29 @@ mod tests {
         set_running(&mut proc);
         proc.stop();
         assert_eq!(proc.state(), State::Stopping);
-        assert!(matches!(proc.handle_exit(ProcessStatus::Success), ShouldRestart::No));
+        assert!(matches!(
+            proc.handle_exit(ProcessStatus::Success),
+            ShouldRestart::No
+        ));
     }
 
     #[tokio::test]
     async fn handle_exit_without_autorestart() {
         let mut proc = test_process(false);
         set_running(&mut proc);
-        assert!(matches!(proc.handle_exit(ProcessStatus::Success), ShouldRestart::No));
+        assert!(matches!(
+            proc.handle_exit(ProcessStatus::Success),
+            ShouldRestart::No
+        ));
     }
 
     #[test]
     fn handle_exit_on_already_stopped() {
         let mut proc = test_process(true);
-        assert!(matches!(proc.handle_exit(ProcessStatus::Success), ShouldRestart::No));
+        assert!(matches!(
+            proc.handle_exit(ProcessStatus::Success),
+            ShouldRestart::No
+        ));
     }
 
     #[tokio::test]
@@ -417,7 +438,10 @@ mod tests {
         let mut proc = test_process(true);
         set_running(&mut proc);
         proc.last_start_time = Some(Instant::now());
-        assert!(matches!(proc.handle_exit(ProcessStatus::Success), ShouldRestart::No));
+        assert!(matches!(
+            proc.handle_exit(ProcessStatus::Success),
+            ShouldRestart::No
+        ));
     }
 
     #[test]
@@ -425,7 +449,10 @@ mod tests {
         let mut proc = test_process(true);
         proc.last_start_time = Some(Instant::now());
         set_stopping(&mut proc, true);
-        assert!(matches!(proc.handle_exit(ProcessStatus::Success), ShouldRestart::Yes));
+        assert!(matches!(
+            proc.handle_exit(ProcessStatus::Success),
+            ShouldRestart::Yes
+        ));
     }
 
     #[tokio::test]
