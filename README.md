@@ -3,7 +3,7 @@
 A terminal multiplexer for dev workflows. Run your entire dev stack with one
 command, each process in its own tab with full terminal emulation.
 
-<img src="https://vhs.charm.sh/vhs-3B6RcvXTo5VudiF4Fjgf0a.gif" alt="mtack demo" width="760">
+<img src="https://vhs.charm.sh/vhs-16FscY1PkmvLZjRcGZeJuA.gif" alt="mtack demo" width="760">
 
 ## Why mtack?
 

@@ -954,6 +954,7 @@ dependencies = [
  "terminput-crossterm",
  "tokio",
  "tui-term",
+ "unicode-width 0.2.2",
  "vt100",
 ]
 
