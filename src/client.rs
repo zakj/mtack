@@ -31,7 +31,7 @@ pub enum AttachEnd {
     Lost,
 }
 
-pub async fn up(config_path: &Path, paths: &Paths) -> Result<Up> {
+pub async fn up(config_path: &Path, config_dir: &Path, paths: &Paths) -> Result<Up> {
     if UnixStream::connect(&paths.socket).await.is_ok() {
         return Ok(Up::AlreadyRunning);
     }
@@ -44,7 +44,11 @@ pub async fn up(config_path: &Path, paths: &Paths) -> Result<Up> {
         .append(true)
         .open(&paths.log)
         .into_diagnostic()?;
+    // Run from the config's directory so processes don't depend on where
+    // whoever started the server happened to be.
     let mut child = Command::new(std::env::current_exe().into_diagnostic()?)
+        .current_dir(config_dir)
+        .env("PWD", config_dir)
         .arg("--config")
         .arg(config_path)
         .arg("server")

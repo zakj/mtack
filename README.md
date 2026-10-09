@@ -86,8 +86,7 @@ processes and quit. Closing the terminal also detaches.
 There is one server per config file, so running `mtack` from another terminal
 takes over the view. Outside any project, `attach` and `down` use the running
 server if there is only one, and list them if there are several. The server reads the config when it starts: run
-`mtack down` to pick up changes. Processes without a `cwd` run in the
-directory where the server started. If the server dies, its errors are
+`mtack down` to pick up changes. If the server dies, its errors are
 logged in `/tmp/mtack-<uid>/` (set `MTACK_TMPDIR` to use another directory
 than `/tmp`).
 
@@ -105,15 +104,15 @@ parent directories. Override with `-c <path>`.
 
 ### Process options
 
-| Option        | Default | Description                                       |
-|---------------|---------|---------------------------------------------------|
-| `cmd`         |         | Command and arguments                             |
-| `shell`       |         | Shell command string (passed to `$SHELL -c`)      |
-| `cwd`         |         | Working directory (`~` expanded)                  |
-| `env`         |         | Environment variables                             |
-| `autostart`   | `#true` | Start automatically on launch                     |
-| `autorestart` | `#true` | Restart on exit                                   |
-| `unfocus-key` | `Esc`   | Key to exit focus mode (for processes that need Esc)|
-| `scrollback`  | global  | Override global scrollback for this process       |
+| Option        | Default    | Description                                                   |
+|---------------|------------|---------------------------------------------------------------|
+| `cmd`         |            | Command and arguments                                         |
+| `shell`       |            | Shell command string (passed to `$SHELL -c`)                  |
+| `cwd`         | config dir | Working directory (`~` expanded, relative to the config file) |
+| `env`         |            | Environment variables                                         |
+| `autostart`   | `#true`    | Start automatically on launch                                 |
+| `autorestart` | `#true`    | Restart on exit                                               |
+| `unfocus-key` | `Esc`      | Key to exit focus mode (for processes that need Esc)          |
+| `scrollback`  | global     | Override global scrollback for this process                   |
 
 Each process must have exactly one of `cmd` or `shell`.
