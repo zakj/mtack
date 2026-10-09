@@ -59,7 +59,9 @@ async fn main() -> miette::Result<()> {
         // A server can outlive its config (a branch switch, a removed
         // worktree); attach and down only need the path to find it.
         Err(_) if reaches_running => std::path::absolute(&config_path).into_diagnostic()?,
-        Err(e) => miette::bail!("failed to read {}: {e}", config_path.display()),
+        Err(e) => {
+            miette::bail!("failed to read {}: {e}", config_path.display());
+        }
     };
     let paths = Paths::for_config(&config_path)?;
     // Servers are per config, so hints must name the same one.
@@ -138,7 +140,7 @@ async fn attach(paths: &Paths, config_flag: &str) -> miette::Result<()> {
             miette::bail!(
                 "mtack server exited unexpectedly; see {}",
                 paths.log.display()
-            )
+            );
         }
     }
     Ok(())

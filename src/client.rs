@@ -75,9 +75,11 @@ pub async fn up(config_path: &Path, paths: &Paths) -> Result<Up> {
             bail!(
                 "mtack is starting elsewhere but never became reachable; see {}",
                 paths.log.display()
-            )
+            );
         }
-        _ => bail!("server failed to start; see {}", paths.log.display()),
+        _ => {
+            bail!("server failed to start; see {}", paths.log.display());
+        }
     }
 }
 
