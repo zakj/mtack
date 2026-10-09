@@ -35,6 +35,7 @@ pub enum Action {
     SearchNext,
     SearchPrev,
     ToggleHelp,
+    Detach,
     Quit,
     ForceQuit,
     CancelQuit,
@@ -128,6 +129,7 @@ fn resolve_normal(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('/') => Some(Action::EnterSearch),
         KeyCode::Char('n') => Some(Action::SearchNext),
         KeyCode::Esc => Some(Action::SearchCancel),
+        KeyCode::Char('d') => Some(Action::Detach),
         KeyCode::Char('q') => Some(Action::Quit),
         KeyCode::Char('?') => Some(Action::ToggleHelp),
         _ => None,
@@ -213,6 +215,10 @@ mod tests {
         assert_eq!(
             resolve(key(KeyCode::Char('q')), Mode::Normal, &UnfocusKey::Esc),
             Some(Action::Quit)
+        );
+        assert_eq!(
+            resolve(key(KeyCode::Char('d')), Mode::Normal, &UnfocusKey::Esc),
+            Some(Action::Detach)
         );
     }
 

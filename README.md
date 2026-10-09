@@ -70,6 +70,27 @@ proc "docker" {
 
 Then run `mtack`. Press `?` for keybindings.
 
+## Detaching
+
+mtack runs your processes in a background server, and `mtack` attaches to it.
+Press `d` to detach and leave everything running; press `q` to stop the
+processes and quit. Closing the terminal also detaches.
+
+| Command        | Description                                          |
+|----------------|------------------------------------------------------|
+| `mtack`        | Start the processes if they aren't running, attach   |
+| `mtack up`     | Start the processes in the background                |
+| `mtack attach` | Attach to running processes                          |
+| `mtack down`   | Stop the processes and wait for them to exit         |
+
+There is one server per config file, so running `mtack` from another terminal
+takes over the view. Outside any project, `attach` and `down` use the running
+server if there is only one, and list them if there are several. The server reads the config when it starts: run
+`mtack down` to pick up changes. Processes without a `cwd` run in the
+directory where the server started. If the server dies, its errors are
+logged in `/tmp/mtack-<uid>/` (set `MTACK_TMPDIR` to use another directory
+than `/tmp`).
+
 ## Config
 
 mtack looks for `mtack.kdl` (or `.mtack.kdl`) in the current directory and

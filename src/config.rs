@@ -56,9 +56,8 @@ const KNOWN_PROC_NODES: &[&str] = &[
 ];
 
 impl Config {
-    pub fn load(start: &Path) -> Result<Self> {
-        let path = find_config_file(start)?;
-        let input = std::fs::read_to_string(&path)
+    pub fn load(path: &Path) -> Result<Self> {
+        let input = std::fs::read_to_string(path)
             .into_diagnostic()
             .wrap_err_with(|| format!("failed to read {}", path.display()))?;
         parse(&input)
@@ -675,7 +674,7 @@ proc "test" { cmd "echo"; }
             r#"proc "test" { cmd "echo" "hi"; }"#,
         )
         .unwrap();
-        let config = Config::load(dir.path()).unwrap();
+        let config = Config::load(&find_config_file(dir.path()).unwrap()).unwrap();
         assert_eq!(config.procs[0].name, "test");
     }
 
