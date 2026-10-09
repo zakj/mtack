@@ -106,15 +106,32 @@ impl Process {
         self.lifecycle.state()
     }
 
-    pub fn start(&mut self) -> miette::Result<()> {
+    /// A spawn failure leaves the process Failed with the error shown in its
+    /// output, so one bad command can't take down the others.
+    pub fn start(&mut self) {
         if matches!(self.lifecycle, Lifecycle::Running { .. }) {
-            return Ok(());
+            return;
         }
 
         if self.last_start_time.is_some() {
             self.terminal.inject_banner("restarted");
         }
 
+        match self.spawn() {
+            Ok(running) => {
+                self.lifecycle = running;
+                self.last_start_time = Some(Instant::now());
+                self.sync_paused();
+            }
+            Err(e) => {
+                self.terminal
+                    .inject_banner(&format!("failed to start {}: {e}", self.config.program));
+                self.lifecycle = Lifecycle::Failed;
+            }
+        }
+    }
+
+    fn spawn(&self) -> miette::Result<Lifecycle> {
         let (pty, pts) = pty_process::open().map_err(|e| miette::miette!("{e}"))?;
         let (rows, cols) = self.terminal.size();
         pty.resize(Size::new(rows, cols))
@@ -135,7 +152,7 @@ impl Process {
         });
         let (pty_reader, writer) = pty.into_split();
 
-        self.lifecycle = Lifecycle::Running {
+        Ok(Lifecycle::Running {
             writer,
             pid,
             handle: spawn_watcher(
@@ -145,11 +162,7 @@ impl Process {
                 self.event_tx.clone(),
                 self.pause_tx.subscribe(),
             ),
-        };
-        self.last_start_time = Some(Instant::now());
-        self.sync_paused();
-
-        Ok(())
+        })
     }
 
     pub fn stop(&mut self) {
@@ -203,14 +216,12 @@ impl Process {
         ShouldRestart::No
     }
 
-    pub async fn write(&mut self, data: &[u8]) -> miette::Result<()> {
+    /// Input for a process whose PTY has closed is dropped; its exit event
+    /// follows.
+    pub async fn write(&mut self, data: &[u8]) {
         if let Lifecycle::Running { writer, .. } = &mut self.lifecycle {
-            writer
-                .write_all(data)
-                .await
-                .map_err(|e| miette::miette!("{e}"))?;
+            let _ = writer.write_all(data).await;
         }
-        Ok(())
     }
 
     pub fn resize(&mut self, rows: u16, cols: u16) {
@@ -329,6 +340,20 @@ mod tests {
 
     fn set_stopping(proc: &mut Process, pending_restart: bool) {
         proc.lifecycle = Lifecycle::Stopping { pending_restart };
+    }
+
+    #[tokio::test]
+    async fn start_with_missing_program_marks_failed() {
+        let mut proc = test_process(false);
+        proc.config.program = "mtack-test-no-such-program".into();
+        proc.start();
+        assert_eq!(proc.state(), State::Failed);
+        assert!(
+            proc.terminal()
+                .screen()
+                .contents()
+                .contains("failed to start")
+        );
     }
 
     #[test]
