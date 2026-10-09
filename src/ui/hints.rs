@@ -98,6 +98,7 @@ pub fn normal_hints() -> &'static [KeyHint] {
         KeyHint::new("r", "restart", Actions).bar("r", WhenRunning),
         KeyHint::new("/", "search", Navigation).bar("/", Always),
         KeyHint::new("n/N", "next/prev match", Navigation),
+        KeyHint::new("d", "detach", App).bar("d", Always).right(),
         KeyHint::new("q", "quit", App).bar("q", Always).right(),
         KeyHint::new("Q", "force quit", App),
         KeyHint::new("?", "help", App).bar("?", Always).right(),

@@ -56,3 +56,8 @@ Type "x"
 Sleep 1s
 Type "s"
 Sleep 2s
+
+# Closing the terminal only detaches, so stop the background server.
+Hide
+Type "Q"
+Sleep 3s
