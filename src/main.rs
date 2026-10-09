@@ -53,6 +53,12 @@ async fn main() -> miette::Result<()> {
             Err(not_found) => return Err(not_found),
         },
     };
+    // Processes run beside the config as named, even if it's a symlink.
+    let config_dir = std::path::absolute(&config_path)
+        .into_diagnostic()?
+        .parent()
+        .expect("a config path names a file")
+        .to_path_buf();
     // Servers are keyed by the resolved path.
     let config_path = match std::fs::canonicalize(&config_path) {
         Ok(path) => path,
@@ -73,11 +79,11 @@ async fn main() -> miette::Result<()> {
 
     match args.command {
         None => {
-            client::up(&config_path, &paths).await?;
+            client::up(&config_path, &config_dir, &paths).await?;
             attach(&paths, &config_flag).await
         }
         Some(Cmd::Up) => {
-            match client::up(&config_path, &paths).await? {
+            match client::up(&config_path, &config_dir, &paths).await? {
                 client::Up::Started => {
                     eprintln!("mtack started; `mtack attach{config_flag}` to view");
                 }

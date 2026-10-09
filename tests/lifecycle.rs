@@ -109,7 +109,8 @@ fn up_and_down() {
     let (ok, err) = sandbox.with_config(&config, "up");
     assert!(ok && err.contains("already running"), "{err}");
 
-    wait_for_contents(&marker);
+    let config_dir = config.parent().unwrap().canonicalize().unwrap();
+    assert_eq!(Path::new(&wait_for_contents(&marker)), config_dir);
 
     let (ok, err) = sandbox.with_config(&config, "down");
     assert!(ok && err.is_empty(), "{err}");
@@ -168,6 +169,25 @@ fn a_deleted_config_can_still_be_stopped() {
         err.contains("no mtack.kdl"),
         "a server is still running: {err}"
     );
+}
+
+#[test]
+fn a_symlinked_config_runs_processes_beside_the_link() {
+    let sandbox = Sandbox::new();
+    let marker = sandbox.root.path().join("ran");
+    let real = sandbox.config(
+        "dotfiles",
+        &format!(r#"shell "pwd -P > {}; sleep 30";"#, marker.display()),
+    );
+    let project = sandbox.root.path().join("project");
+    std::fs::create_dir(&project).unwrap();
+    let link = project.join("mtack.kdl");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let _cleanup = Cleanup(&sandbox, vec![link.clone()]);
+
+    assert!(sandbox.with_config(&link, "up").0);
+    let project = project.canonicalize().unwrap();
+    assert_eq!(Path::new(&wait_for_contents(&marker)), project);
 }
 
 #[test]
