@@ -3,12 +3,13 @@
 use crate::config::ProcConfig;
 use crate::event::{Event, ProcessStatus};
 use crate::terminal::Terminal;
-use bytes::BytesMut;
+use bytes::{Buf, Bytes, BytesMut};
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 use pty_process::Size;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 
@@ -27,10 +28,18 @@ pub enum ShouldRestart {
     No,
 }
 
+/// Pending input per process, in messages. A paste arrives one key per
+/// message, so this is sized for large pastes into a process that's busy.
+/// Input beyond it is dropped: a process that isn't reading must not stall
+/// the App.
+const INPUT_QUEUE_SIZE: usize = 64 * 1024;
+
 enum Lifecycle {
     Stopped,
     Running {
-        writer: pty_process::OwnedWritePty,
+        /// Dropping these ends the writer task.
+        input: mpsc::Sender<Bytes>,
+        size: watch::Sender<Size>,
         pid: Option<Pid>,
         handle: JoinHandle<()>,
     },
@@ -65,6 +74,7 @@ pub struct Process {
     event_tx: mpsc::Sender<Event>,
     pause_tx: watch::Sender<bool>,
     last_start_time: Option<Instant>,
+    dropping_input: bool,
 }
 
 impl Process {
@@ -87,6 +97,7 @@ impl Process {
             event_tx,
             pause_tx,
             last_start_time: None,
+            dropping_input: false,
         }
     }
 
@@ -120,6 +131,7 @@ impl Process {
         match self.spawn() {
             Ok(running) => {
                 self.lifecycle = running;
+                self.dropping_input = false;
                 self.last_start_time = Some(Instant::now());
                 self.sync_paused();
             }
@@ -151,9 +163,13 @@ impl Process {
             Pid::from_raw(raw)
         });
         let (pty_reader, writer) = pty.into_split();
+        let (input, input_rx) = mpsc::channel(INPUT_QUEUE_SIZE);
+        let (size, size_rx) = watch::channel(Size::new(rows, cols));
+        tokio::spawn(write_input(writer, input_rx, size_rx));
 
         Ok(Lifecycle::Running {
-            writer,
+            input,
+            size,
             pid,
             handle: spawn_watcher(
                 self.id,
@@ -172,7 +188,8 @@ impl Process {
         let _ = self.pause_tx.send(false);
 
         let Lifecycle::Running {
-            writer,
+            input,
+            size,
             pid,
             handle,
         } = std::mem::replace(
@@ -185,12 +202,10 @@ impl Process {
             unreachable!();
         };
 
-        // SIGTERM the process group before dropping the PTY writer, so the
-        // child doesn't see SIGHUP (from PTY close) before our SIGTERM.
         if let Some(pid) = pid {
             signal_process_group(pid, Signal::SIGTERM);
         }
-        drop(writer);
+        drop((input, size));
 
         // Spawn a SIGKILL escalation timer. The watcher task sends
         // ProcessExited when the child exits regardless of signal.
@@ -216,18 +231,33 @@ impl Process {
         ShouldRestart::No
     }
 
-    /// Input for a process whose PTY has closed is dropped; its exit event
-    /// follows.
-    pub async fn write(&mut self, data: &[u8]) {
-        if let Lifecycle::Running { writer, .. } = &mut self.lifecycle {
-            let _ = writer.write_all(data).await;
+    /// Queues input without waiting. Input is dropped if the process has
+    /// fallen too far behind reading, or its PTY has closed (its exit event
+    /// follows).
+    pub fn write(&mut self, data: &[u8]) {
+        let Lifecycle::Running { input, .. } = &self.lifecycle else {
+            return;
+        };
+        // After an overflow, drop everything until the queue drains, so a
+        // paste loses one clean tail rather than holes that splice lines.
+        if self.dropping_input && input.capacity() < input.max_capacity() {
+            return;
         }
+        let full = matches!(
+            input.try_send(Bytes::copy_from_slice(data)),
+            Err(TrySendError::Full(_))
+        );
+        if full && !self.dropping_input {
+            self.terminal
+                .inject_banner("input dropped: process isn't reading fast enough");
+        }
+        self.dropping_input = full;
     }
 
     pub fn resize(&mut self, rows: u16, cols: u16) {
         self.terminal.resize(rows, cols);
-        if let Lifecycle::Running { writer, .. } = &self.lifecycle {
-            let _ = writer.resize(Size::new(rows, cols));
+        if let Lifecycle::Running { size, .. } = &self.lifecycle {
+            size.send_replace(Size::new(rows, cols));
         }
     }
 
@@ -286,7 +316,6 @@ impl Process {
 impl Drop for Process {
     fn drop(&mut self) {
         let _ = self.pause_tx.send(false);
-        // Extract Running resources so SIGTERM is sent before writer is dropped.
         if let Lifecycle::Running { pid: Some(pid), .. } =
             std::mem::replace(&mut self.lifecycle, Lifecycle::Stopped)
         {
@@ -329,10 +358,9 @@ mod tests {
 
     /// Put process into Running state with real PTY resources.
     fn set_running(proc: &mut Process) {
-        let (pty, _pts) = pty_process::open().unwrap();
-        let (_reader, writer) = pty.into_split();
         proc.lifecycle = Lifecycle::Running {
-            writer,
+            input: mpsc::channel(1).0,
+            size: watch::channel(Size::new(24, 80)).0,
             pid: None,
             handle: tokio::spawn(std::future::pending::<()>()),
         };
@@ -340,6 +368,110 @@ mod tests {
 
     fn set_stopping(proc: &mut Process, pending_restart: bool) {
         proc.lifecycle = Lifecycle::Stopping { pending_restart };
+    }
+
+    #[tokio::test]
+    async fn written_input_reaches_the_process() {
+        let (tx, mut rx) = mpsc::channel(64);
+        let mut config = test_config(false);
+        config.program = "cat".into();
+        let mut proc = Process::new(0, config, 24, 80, 100, Duration::from_secs(5), tx);
+        proc.start();
+        proc.write(b"hello from mtack\n");
+
+        let mut output = Vec::new();
+        let found = tokio::time::timeout(Duration::from_secs(2), async {
+            while let Some(Event::PtyOutput { data, .. }) = rx.recv().await {
+                output.extend_from_slice(&data);
+                // Once echoed by the terminal, once printed by cat.
+                if output
+                    .windows(16)
+                    .filter(|w| w == b"hello from mtack")
+                    .count()
+                    == 2
+                {
+                    return;
+                }
+            }
+        })
+        .await;
+        assert!(found.is_ok(), "{}", String::from_utf8_lossy(&output));
+    }
+
+    fn shell_process(script: &str) -> (Process, mpsc::Receiver<Event>) {
+        let (tx, rx) = mpsc::channel(1024);
+        let mut config = test_config(false);
+        config.program = "sh".into();
+        config.args = vec!["-c".into(), script.into()];
+        let mut proc = Process::new(0, config, 24, 80, 100, Duration::from_secs(5), tx);
+        proc.start();
+        (proc, rx)
+    }
+
+    // Whole lines throughout: a terminal discards an overlong partial line
+    // instead of queueing it.
+
+    #[tokio::test]
+    async fn resize_applies_while_input_is_stuck() {
+        let (mut proc, mut rx) = shell_process("stty -echo; sleep 0.5; stty size; sleep 30");
+        let line = [b"x".repeat(39), b"\n".to_vec()].concat();
+        for _ in 0..4096 {
+            proc.write(&line);
+        }
+        // Let the writer fill the terminal's input buffer and get stuck.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        proc.resize(33, 77);
+
+        let mut output = Vec::new();
+        let found = tokio::time::timeout(Duration::from_secs(3), async {
+            while let Some(Event::PtyOutput { data, .. }) = rx.recv().await {
+                output.extend_from_slice(&data);
+                if output.windows(5).any(|w| w == b"33 77") {
+                    return;
+                }
+            }
+        })
+        .await;
+        assert!(found.is_ok(), "{}", String::from_utf8_lossy(&output));
+    }
+
+    #[tokio::test]
+    async fn overflowing_input_loses_only_a_clean_tail() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("out");
+        let (mut proc, _rx) = shell_process(&format!(
+            "stty -echo; while IFS= read -r l; do printf '%s\\n' \"$l\"; done > {}",
+            out.display()
+        ));
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        // A paste arrives one key at a time. Overflow the queue before the
+        // writer can run, then keep going with the writer draining between
+        // keys, as it does in the App.
+        let lines = (INPUT_QUEUE_SIZE + 20_000) / 7;
+        let sent: Vec<u8> = (0..lines)
+            .flat_map(|n| format!("{n:06}\n").into_bytes())
+            .collect();
+        for (i, byte) in sent.iter().enumerate() {
+            proc.write(&[*byte]);
+            if i > INPUT_QUEUE_SIZE && i % 256 == 0 {
+                tokio::task::yield_now().await;
+            }
+        }
+
+        let mut received = Vec::new();
+        loop {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            let now = std::fs::read(&out).unwrap_or_default();
+            if !now.is_empty() && now.len() == received.len() {
+                break;
+            }
+            received = now;
+        }
+        assert!(received.len() < sent.len(), "nothing overflowed");
+        assert!(sent.starts_with(&received), "input arrived with holes");
+        let screen = proc.terminal().screen().contents();
+        assert!(screen.contains("input dropped"), "{screen}");
     }
 
     #[tokio::test]
@@ -509,6 +641,38 @@ mod tests {
         let mut proc = test_process(true);
         proc.lifecycle = Lifecycle::Failed;
         assert!(matches!(proc.restart(), ShouldRestart::Yes));
+    }
+}
+
+/// Feeds queued input to the PTY. Resizes go on a separate channel so they
+/// apply even while a write is stuck behind a process that isn't reading.
+async fn write_input(
+    mut pty: pty_process::OwnedWritePty,
+    mut input: mpsc::Receiver<Bytes>,
+    mut size: watch::Receiver<Size>,
+) {
+    let mut pending = Bytes::new();
+    loop {
+        // `write` is cancel-safe: if another branch wins, nothing was written.
+        tokio::select! {
+            changed = size.changed() => {
+                if changed.is_err() {
+                    return;
+                }
+                let _ = pty.resize(*size.borrow_and_update());
+            }
+            data = input.recv(), if pending.is_empty() => match data {
+                Some(data) => pending = data,
+                None => return,
+            },
+            written = pty.write(&pending), if !pending.is_empty() => match written {
+                Ok(n) if n > 0 => pending.advance(n),
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                // The child has likely closed its terminal and its exit event
+                // will follow; drop this input but keep serving until stopped.
+                _ => pending.clear(),
+            },
+        }
     }
 }
 
