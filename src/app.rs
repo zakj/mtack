@@ -404,7 +404,7 @@ impl App {
             }
             Action::ForwardKey(key) => {
                 let bytes = key_event_to_bytes(key);
-                self.processes[self.selected].write(&bytes).await;
+                self.processes[self.selected].write(&bytes);
             }
         }
     }
