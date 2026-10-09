@@ -110,7 +110,7 @@ impl App {
         // Auto-start processes.
         for proc in &mut self.processes {
             if proc.autostart() {
-                proc.start()?;
+                proc.start();
             }
         }
 
@@ -169,7 +169,7 @@ impl App {
                         Err(_) => break,
                     };
                     let was_focused = self.focused;
-                    self.handle_crossterm_event(event).await?;
+                    self.handle_crossterm_event(event).await;
                     if self.focused != was_focused {
                         let period = if self.focused {
                             RENDER_INTERVAL_FOCUSED
@@ -186,7 +186,7 @@ impl App {
                         Event::PtyOutput { id, .. } => *id == self.selected,
                         Event::ProcessExited { .. } => true,
                     };
-                    self.handle_app_event(event).await?;
+                    self.handle_app_event(event);
                     self.dirty |= needs_render;
                 }
                 _ = sigterm.recv() => {
@@ -201,12 +201,12 @@ impl App {
         Ok(())
     }
 
-    async fn handle_crossterm_event(&mut self, event: CtEvent) -> miette::Result<()> {
+    async fn handle_crossterm_event(&mut self, event: CtEvent) {
         match event {
             CtEvent::Key(key) => {
                 let unfocus_key = self.processes[self.selected].unfocus_key();
                 if let Some(action) = input::resolve(key, self.mode, unfocus_key) {
-                    self.handle_action(action).await?;
+                    self.handle_action(action).await;
                 }
             }
             CtEvent::Mouse(mouse) => match mouse.kind {
@@ -253,10 +253,9 @@ impl App {
             CtEvent::FocusLost => self.focused = false,
             _ => {}
         }
-        Ok(())
     }
 
-    async fn handle_action(&mut self, action: Action) -> miette::Result<()> {
+    async fn handle_action(&mut self, action: Action) {
         match action {
             Action::SelectTab(idx) => {
                 if idx < self.processes.len() {
@@ -286,14 +285,14 @@ impl App {
                 self.mode = Mode::Normal;
             }
             Action::StartProcess => {
-                self.processes[self.selected].start()?;
+                self.processes[self.selected].start();
             }
             Action::StopProcess => {
                 self.processes[self.selected].stop();
             }
             Action::RestartProcess => {
                 if matches!(self.processes[self.selected].restart(), ShouldRestart::Yes) {
-                    self.processes[self.selected].start()?;
+                    self.processes[self.selected].start();
                 }
             }
             Action::ScrollUp(amount) => {
@@ -405,13 +404,12 @@ impl App {
             }
             Action::ForwardKey(key) => {
                 let bytes = key_event_to_bytes(key);
-                self.processes[self.selected].write(&bytes).await?;
+                self.processes[self.selected].write(&bytes).await;
             }
         }
-        Ok(())
     }
 
-    async fn handle_app_event(&mut self, event: Event) -> miette::Result<()> {
+    fn handle_app_event(&mut self, event: Event) {
         match event {
             Event::PtyOutput { id, data } => {
                 if let Some(proc) = self.processes.get_mut(id) {
@@ -422,11 +420,10 @@ impl App {
                 if let Some(proc) = self.processes.get_mut(id)
                     && matches!(proc.handle_exit(status), ShouldRestart::Yes)
                 {
-                    proc.start()?;
+                    proc.start();
                 }
             }
         }
-        Ok(())
     }
 
     // Navigate to the next (or previous) match relative to the current viewport

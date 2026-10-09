@@ -230,8 +230,12 @@ fn parse_command(doc: &kdl::KdlDocument, proc_name: &str) -> Result<(String, Vec
     let has_cmd = doc.get("cmd").is_some();
     let has_shell = doc.get("shell").is_some();
     match (has_cmd, has_shell) {
-        (true, true) => bail!("proc {proc_name:?} has both cmd and shell; use only one"),
-        (false, false) => bail!("proc {proc_name:?} is missing cmd or shell"),
+        (true, true) => {
+            bail!("proc {proc_name:?} has both cmd and shell; use only one");
+        }
+        (false, false) => {
+            bail!("proc {proc_name:?} is missing cmd or shell");
+        }
         (true, false) => parse_cmd(doc, proc_name),
         (false, true) => parse_shell(doc, proc_name),
     }
@@ -323,14 +327,18 @@ fn parse_unfocus_key(doc: &kdl::KdlDocument) -> Result<UnfocusKey> {
             let mut chars = ch.chars();
             match (chars.next(), chars.next()) {
                 (Some(c), None) if c.is_ascii_lowercase() => Ok(UnfocusKey::Ctrl(c)),
-                _ => bail!("unfocus-key ctrl- must be followed by a single lowercase letter"),
+                _ => {
+                    bail!("unfocus-key ctrl- must be followed by a single lowercase letter");
+                }
             }
         }
         s => {
             let mut chars = s.chars();
             match (chars.next(), chars.next()) {
                 (Some(c), None) => Ok(UnfocusKey::Char(c)),
-                _ => bail!("unfocus-key must be \"esc\", a single character, or \"ctrl-<letter>\""),
+                _ => {
+                    bail!("unfocus-key must be \"esc\", a single character, or \"ctrl-<letter>\"");
+                }
             }
         }
     }
